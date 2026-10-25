@@ -1,0 +1,37 @@
+# Data, weights and caches live outside the repository (PDMFM_DATA_ROOT, HF_HOME).
+/Data/
+/data/
+/Research papers/
+*.mat
+*.tdms
+*.hdf5
+*.h5
+*.npy
+*.npz
+*.pt
+*.ckpt
+*.safetensors
+*.zip
+*.rar
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+build/
+dist/
+
+# Run outputs
+/runs/
+/outputs/
+/logs/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

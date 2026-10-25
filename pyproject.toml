@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdmfm"
+version = "0.1.0"
+description = "Project 14: a multimodal predictive-maintenance model built from frozen pretrained encoders."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Mohammad Taan Al Akoum" }]
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "torch>=2.4",
+    "pyyaml>=6.0",
+    "h5py>=3.10",
+    "nptdms>=1.9",
+    "scikit-learn>=1.4",
+    "pillow>=10.0",
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "huggingface_hub>=0.24",
+]
+
+[project.optional-dependencies]
+# Frozen encoders and PEFT (Gate 1 candidates, DINOv2, Qwen3-Embedding, AST).
+encoders = [
+    "transformers>=4.51",
+    "peft>=0.12",
+    "sentence-transformers>=3.0",
+    "mantis-tsfm>=1.1",
+]
+# Forecasting stage of the two-stage RUL arm.
+forecast = ["timesfm[torch]>=2.5"]
+# Explanations and photo anomaly maps.
+xai = ["captum>=0.7"]
+anomaly = ["anomalib>=1.1"]
+dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1.380"]
+
+[project.scripts]
+pdmfm-fetch = "pdmfm.fetch:main"
+
+[tool.setuptools.packages.find]
+include = ["pdmfm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["network: needs internet access (skipped unless PDMFM_NETWORK_TESTS=1)"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["Data", "Research papers"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pyright]
+include = ["pdmfm", "scripts", "tests"]
