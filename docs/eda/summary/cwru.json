@@ -1,0 +1,639 @@
+{
+  "recordings": 40,
+  "windows_1s_total": 356,
+  "classes": {
+    "normal": 4,
+    "inner_race": 12,
+    "ball": 12,
+    "outer_race": 12
+  },
+  "durations_s": [
+    5.08,
+    10.08,
+    10.11,
+    10.12,
+    10.13,
+    10.14,
+    10.15,
+    10.17,
+    10.18,
+    10.19,
+    10.2,
+    10.21,
+    10.24
+  ],
+  "rpm_by_load": {
+    "0": [
+      1796.0,
+      1797.0
+    ],
+    "1": [
+      1771.0,
+      1772.0,
+      1773.0,
+      1774.0
+    ],
+    "2": [
+      1748.0,
+      1749.0,
+      1750.0,
+      1752.0,
+      1754.0
+    ],
+    "3": [
+      1721.0,
+      1722.0,
+      1723.0,
+      1724.0,
+      1725.0,
+      1728.0,
+      1729.0
+    ]
+  },
+  "rpm_vs_vibration_pct_max_abs": 0.12,
+  "top_band_ratio_log10_5p7_6khz_minus_4_5khz": {
+    "normal_median": -0.49,
+    "normal_range": [
+      -0.55,
+      -0.42
+    ],
+    "fault_median": -2.08,
+    "fault_range": [
+      -2.47,
+      -1.03
+    ],
+    "normal_vs_fault_cross_load_from_this_one_feature": {
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "n_train": 120,
+      "n_test": 40
+    },
+    "power_share_above_5p25khz_median": {
+      "resampled_only": {
+        "normal": 0.00969,
+        "fault": 0.000504
+      },
+      "band_limited": {
+        "normal": 1.88e-11,
+        "fault": 1.17e-12
+      }
+    }
+  },
+  "normal_raw_peaks_hz": {
+    "97": [
+      148.0,
+      161.5,
+      191.5,
+      360.0,
+      420.0,
+      449.0,
+      479.0,
+      481.0
+    ],
+    "98": [
+      159.5,
+      189.0,
+      353.5,
+      360.0,
+      389.5,
+      419.0,
+      474.5,
+      495.5
+    ],
+    "99": [
+      144.0,
+      157.5,
+      186.5,
+      348.0,
+      360.0,
+      389.0,
+      418.5,
+      468.5
+    ],
+    "100": [
+      142.0,
+      155.5,
+      184.0,
+      342.0,
+      360.0,
+      389.0,
+      417.5,
+      480.0
+    ]
+  },
+  "de_fe_rms_correlation_median": 0.672,
+  "cross_load_baseline_handcrafted": {
+    "balanced_accuracy": 1.0,
+    "macro_f1": 1.0,
+    "n_train": 265,
+    "n_test": 91
+  },
+  "envelope_line_prominence": {
+    "outer_race": {
+      "fault": 0.38,
+      "normal": 0.049
+    },
+    "inner_race": {
+      "fault": 0.23,
+      "normal": -0.0
+    },
+    "ball": {
+      "fault": 0.183,
+      "normal": 0.08
+    }
+  },
+  "defect_orders": {
+    "BPFO": 3.585,
+    "BPFI": 5.415,
+    "BSF": 2.357,
+    "FTF": 0.398
+  },
+  "inventory": [
+    {
+      "file": "97",
+      "label": "normal",
+      "severity": null,
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.91,
+      "rpm_vs_vibration_pct": 0.06,
+      "seconds": 5.08,
+      "windows_1s": 4,
+      "raw_peaks_hz": [
+        148.0,
+        161.5,
+        191.5,
+        360.0,
+        420.0,
+        449.0,
+        479.0,
+        481.0
+      ]
+    },
+    {
+      "file": "98",
+      "label": "normal",
+      "severity": null,
+      "load_hp": 1,
+      "rpm": 1772.0,
+      "shaft_hz_from_vibration": 29.53,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.08,
+      "windows_1s": 9,
+      "raw_peaks_hz": [
+        159.5,
+        189.0,
+        353.5,
+        360.0,
+        389.5,
+        419.0,
+        474.5,
+        495.5
+      ]
+    },
+    {
+      "file": "99",
+      "label": "normal",
+      "severity": null,
+      "load_hp": 2,
+      "rpm": 1750.0,
+      "shaft_hz_from_vibration": 29.17,
+      "rpm_vs_vibration_pct": 0.0,
+      "seconds": 10.11,
+      "windows_1s": 9,
+      "raw_peaks_hz": [
+        144.0,
+        157.5,
+        186.5,
+        348.0,
+        360.0,
+        389.0,
+        418.5,
+        468.5
+      ]
+    },
+    {
+      "file": "100",
+      "label": "normal",
+      "severity": null,
+      "load_hp": 3,
+      "rpm": 1725.0,
+      "shaft_hz_from_vibration": 28.75,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.12,
+      "windows_1s": 9,
+      "raw_peaks_hz": [
+        142.0,
+        155.5,
+        184.0,
+        342.0,
+        360.0,
+        389.0,
+        417.5,
+        480.0
+      ]
+    },
+    {
+      "file": "105",
+      "label": "inner_race",
+      "severity": "0.007 in",
+      "load_hp": 0,
+      "rpm": 1797.0,
+      "shaft_hz_from_vibration": 29.93,
+      "rpm_vs_vibration_pct": 0.07,
+      "seconds": 10.11,
+      "windows_1s": 9
+    },
+    {
+      "file": "106",
+      "label": "inner_race",
+      "severity": "0.007 in",
+      "load_hp": 1,
+      "rpm": 1772.0,
+      "shaft_hz_from_vibration": 29.54,
+      "rpm_vs_vibration_pct": -0.01,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "107",
+      "label": "inner_race",
+      "severity": "0.007 in",
+      "load_hp": 2,
+      "rpm": 1748.0,
+      "shaft_hz_from_vibration": 29.13,
+      "rpm_vs_vibration_pct": -0.0,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "108",
+      "label": "inner_race",
+      "severity": "0.007 in",
+      "load_hp": 3,
+      "rpm": 1721.0,
+      "shaft_hz_from_vibration": 28.67,
+      "rpm_vs_vibration_pct": 0.05,
+      "seconds": 10.24,
+      "windows_1s": 10
+    },
+    {
+      "file": "118",
+      "label": "ball",
+      "severity": "0.007 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.92,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.21,
+      "windows_1s": 9
+    },
+    {
+      "file": "119",
+      "label": "ball",
+      "severity": "0.007 in",
+      "load_hp": 1,
+      "rpm": 1772.0,
+      "shaft_hz_from_vibration": 29.52,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.12,
+      "windows_1s": 9
+    },
+    {
+      "file": "120",
+      "label": "ball",
+      "severity": "0.007 in",
+      "load_hp": 2,
+      "rpm": 1748.0,
+      "shaft_hz_from_vibration": 29.15,
+      "rpm_vs_vibration_pct": -0.04,
+      "seconds": 10.13,
+      "windows_1s": 9
+    },
+    {
+      "file": "121",
+      "label": "ball",
+      "severity": "0.007 in",
+      "load_hp": 3,
+      "rpm": 1722.0,
+      "shaft_hz_from_vibration": 28.71,
+      "rpm_vs_vibration_pct": -0.02,
+      "seconds": 10.13,
+      "windows_1s": 9
+    },
+    {
+      "file": "130",
+      "label": "outer_race",
+      "severity": "0.007 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.93,
+      "rpm_vs_vibration_pct": 0.02,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "131",
+      "label": "outer_race",
+      "severity": "0.007 in",
+      "load_hp": 1,
+      "rpm": 1773.0,
+      "shaft_hz_from_vibration": 29.55,
+      "rpm_vs_vibration_pct": -0.0,
+      "seconds": 10.2,
+      "windows_1s": 9
+    },
+    {
+      "file": "132",
+      "label": "outer_race",
+      "severity": "0.007 in",
+      "load_hp": 2,
+      "rpm": 1750.0,
+      "shaft_hz_from_vibration": 29.16,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.12,
+      "windows_1s": 9
+    },
+    {
+      "file": "133",
+      "label": "outer_race",
+      "severity": "0.007 in",
+      "load_hp": 3,
+      "rpm": 1725.0,
+      "shaft_hz_from_vibration": 28.75,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.21,
+      "windows_1s": 9
+    },
+    {
+      "file": "169",
+      "label": "inner_race",
+      "severity": "0.014 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.92,
+      "rpm_vs_vibration_pct": 0.04,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "170",
+      "label": "inner_race",
+      "severity": "0.014 in",
+      "load_hp": 1,
+      "rpm": 1774.0,
+      "shaft_hz_from_vibration": 29.56,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "171",
+      "label": "inner_race",
+      "severity": "0.014 in",
+      "load_hp": 2,
+      "rpm": 1752.0,
+      "shaft_hz_from_vibration": 29.18,
+      "rpm_vs_vibration_pct": 0.07,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "172",
+      "label": "inner_race",
+      "severity": "0.014 in",
+      "load_hp": 3,
+      "rpm": 1728.0,
+      "shaft_hz_from_vibration": 28.8,
+      "rpm_vs_vibration_pct": -0.01,
+      "seconds": 10.14,
+      "windows_1s": 9
+    },
+    {
+      "file": "185",
+      "label": "ball",
+      "severity": "0.014 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.93,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "186",
+      "label": "ball",
+      "severity": "0.014 in",
+      "load_hp": 1,
+      "rpm": 1772.0,
+      "shaft_hz_from_vibration": 29.54,
+      "rpm_vs_vibration_pct": -0.01,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "187",
+      "label": "ball",
+      "severity": "0.014 in",
+      "load_hp": 2,
+      "rpm": 1749.0,
+      "shaft_hz_from_vibration": 29.14,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "188",
+      "label": "ball",
+      "severity": "0.014 in",
+      "load_hp": 3,
+      "rpm": 1724.0,
+      "shaft_hz_from_vibration": 28.72,
+      "rpm_vs_vibration_pct": 0.04,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "197",
+      "label": "outer_race",
+      "severity": "0.014 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.92,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "198",
+      "label": "outer_race",
+      "severity": "0.014 in",
+      "load_hp": 1,
+      "rpm": 1772.0,
+      "shaft_hz_from_vibration": 29.54,
+      "rpm_vs_vibration_pct": -0.01,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "199",
+      "label": "outer_race",
+      "severity": "0.014 in",
+      "load_hp": 2,
+      "rpm": 1749.0,
+      "shaft_hz_from_vibration": 29.14,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "200",
+      "label": "outer_race",
+      "severity": "0.014 in",
+      "load_hp": 3,
+      "rpm": 1723.0,
+      "shaft_hz_from_vibration": 28.7,
+      "rpm_vs_vibration_pct": 0.06,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "209",
+      "label": "inner_race",
+      "severity": "0.021 in",
+      "load_hp": 0,
+      "rpm": 1797.0,
+      "shaft_hz_from_vibration": 29.93,
+      "rpm_vs_vibration_pct": 0.06,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "210",
+      "label": "inner_race",
+      "severity": "0.021 in",
+      "load_hp": 1,
+      "rpm": 1774.0,
+      "shaft_hz_from_vibration": 29.57,
+      "rpm_vs_vibration_pct": 0.0,
+      "seconds": 10.13,
+      "windows_1s": 9
+    },
+    {
+      "file": "211",
+      "label": "inner_race",
+      "severity": "0.021 in",
+      "load_hp": 2,
+      "rpm": 1752.0,
+      "shaft_hz_from_vibration": 29.19,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.15,
+      "windows_1s": 9
+    },
+    {
+      "file": "212",
+      "label": "inner_race",
+      "severity": "0.021 in",
+      "load_hp": 3,
+      "rpm": 1728.0,
+      "shaft_hz_from_vibration": 28.79,
+      "rpm_vs_vibration_pct": 0.05,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "222",
+      "label": "ball",
+      "severity": "0.021 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.93,
+      "rpm_vs_vibration_pct": 0.0,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "223",
+      "label": "ball",
+      "severity": "0.021 in",
+      "load_hp": 1,
+      "rpm": 1774.0,
+      "shaft_hz_from_vibration": 29.56,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.14,
+      "windows_1s": 9
+    },
+    {
+      "file": "224",
+      "label": "ball",
+      "severity": "0.021 in",
+      "load_hp": 2,
+      "rpm": 1754.0,
+      "shaft_hz_from_vibration": 29.2,
+      "rpm_vs_vibration_pct": 0.12,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "225",
+      "label": "ball",
+      "severity": "0.021 in",
+      "load_hp": 3,
+      "rpm": 1729.0,
+      "shaft_hz_from_vibration": 28.81,
+      "rpm_vs_vibration_pct": 0.03,
+      "seconds": 10.18,
+      "windows_1s": 9
+    },
+    {
+      "file": "234",
+      "label": "outer_race",
+      "severity": "0.021 in",
+      "load_hp": 0,
+      "rpm": 1796.0,
+      "shaft_hz_from_vibration": 29.92,
+      "rpm_vs_vibration_pct": 0.05,
+      "seconds": 10.2,
+      "windows_1s": 9
+    },
+    {
+      "file": "235",
+      "label": "outer_race",
+      "severity": "0.021 in",
+      "load_hp": 1,
+      "rpm": 1771.0,
+      "shaft_hz_from_vibration": 29.51,
+      "rpm_vs_vibration_pct": 0.01,
+      "seconds": 10.17,
+      "windows_1s": 9
+    },
+    {
+      "file": "236",
+      "label": "outer_race",
+      "severity": "0.021 in",
+      "load_hp": 2,
+      "rpm": 1748.0,
+      "shaft_hz_from_vibration": 29.12,
+      "rpm_vs_vibration_pct": 0.05,
+      "seconds": 10.19,
+      "windows_1s": 9
+    },
+    {
+      "file": "237",
+      "label": "outer_race",
+      "severity": "0.021 in",
+      "load_hp": 3,
+      "rpm": 1721.0,
+      "shaft_hz_from_vibration": 28.66,
+      "rpm_vs_vibration_pct": 0.07,
+      "seconds": 10.17,
+      "windows_1s": 9
+    }
+  ],
+  "figures": [
+    "envelope_orders.png",
+    "levels_by_class.png"
+  ],
+  "runtime_s": 4.4,
+  "quick": false
+}

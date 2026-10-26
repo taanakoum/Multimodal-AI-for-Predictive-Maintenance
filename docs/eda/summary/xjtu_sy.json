@@ -1,0 +1,375 @@
+{
+  "bearings": 15,
+  "snapshots": 9216,
+  "lifetime_min_by_condition": {
+    "35Hz12kN": [
+      123,
+      161,
+      158,
+      122,
+      52
+    ],
+    "37.5Hz11kN": [
+      491,
+      161,
+      533,
+      42,
+      339
+    ],
+    "40Hz10kN": [
+      2538,
+      2496,
+      371,
+      1515,
+      114
+    ]
+  },
+  "fpt_found": "15 of 15",
+  "healthy_fraction_median": 0.286,
+  "fpt_rules": {
+    "b10_3sd_c3": {
+      "baseline": 10,
+      "sigmas": 3.0,
+      "consecutive": 3
+    },
+    "b10_3sd_c10": {
+      "baseline": 10,
+      "sigmas": 3.0,
+      "consecutive": 10
+    },
+    "b30_3sd_c10": {
+      "baseline": 30,
+      "sigmas": 3.0,
+      "consecutive": 10
+    },
+    "b30_4sd_c30": {
+      "baseline": 30,
+      "sigmas": 4.0,
+      "consecutive": 30
+    },
+    "b10pct_3sd_c10": {
+      "baseline": 0.1,
+      "sigmas": 3.0,
+      "consecutive": 10
+    }
+  },
+  "fpt_alarms_before_5pct_of_life": {
+    "b10_3sd_c3": [
+      "Bearing3_1",
+      "Bearing3_2"
+    ],
+    "b10_3sd_c10": [
+      "Bearing3_1"
+    ],
+    "b30_3sd_c10": [],
+    "b30_4sd_c30": [],
+    "b10pct_3sd_c10": []
+  },
+  "per_bearing": {
+    "Bearing1_1": {
+      "condition": "35Hz12kN",
+      "lifetime_min": 123,
+      "failure": "outer race",
+      "fpt_index": 15,
+      "healthy_fraction": 0.122,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.122,
+        "b10_3sd_c10": 0.122,
+        "b30_3sd_c10": 0.585,
+        "b30_4sd_c30": 0.602,
+        "b10pct_3sd_c10": 0.187
+      },
+      "rms_first_g": 0.564,
+      "rms_last_g": 7.268,
+      "rms_ratio_last_first": 12.9,
+      "kurtosis_last": 4.51,
+      "bpfo_prominence_end_minus_start": 0.768,
+      "bpfi_prominence_end_minus_start": -0.118
+    },
+    "Bearing1_2": {
+      "condition": "35Hz12kN",
+      "lifetime_min": 161,
+      "failure": "outer race",
+      "fpt_index": 35,
+      "healthy_fraction": 0.217,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.217,
+        "b10_3sd_c10": 0.217,
+        "b30_3sd_c10": 0.217,
+        "b30_4sd_c30": 0.224,
+        "b10pct_3sd_c10": 0.217
+      },
+      "rms_first_g": 0.62,
+      "rms_last_g": 6.964,
+      "rms_ratio_last_first": 11.2,
+      "kurtosis_last": 2.86,
+      "bpfo_prominence_end_minus_start": 0.753,
+      "bpfi_prominence_end_minus_start": 0.175
+    },
+    "Bearing1_3": {
+      "condition": "35Hz12kN",
+      "lifetime_min": 158,
+      "failure": "outer race",
+      "fpt_index": 18,
+      "healthy_fraction": 0.114,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.114,
+        "b10_3sd_c10": 0.171,
+        "b30_3sd_c10": 0.367,
+        "b30_4sd_c30": 0.373,
+        "b10pct_3sd_c10": 0.367
+      },
+      "rms_first_g": 0.495,
+      "rms_last_g": 3.969,
+      "rms_ratio_last_first": 8.0,
+      "kurtosis_last": 3.15,
+      "bpfo_prominence_end_minus_start": 0.215,
+      "bpfi_prominence_end_minus_start": -0.233
+    },
+    "Bearing1_4": {
+      "condition": "35Hz12kN",
+      "lifetime_min": 122,
+      "failure": "cage",
+      "fpt_index": 87,
+      "healthy_fraction": 0.713,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.713,
+        "b10_3sd_c10": null,
+        "b30_3sd_c10": 0.697,
+        "b30_4sd_c30": null,
+        "b10pct_3sd_c10": null
+      },
+      "rms_first_g": 0.462,
+      "rms_last_g": 2.051,
+      "rms_ratio_last_first": 4.4,
+      "kurtosis_last": 144.44,
+      "bpfo_prominence_end_minus_start": 0.047,
+      "bpfi_prominence_end_minus_start": 0.16
+    },
+    "Bearing1_5": {
+      "condition": "35Hz12kN",
+      "lifetime_min": 52,
+      "failure": "inner race, outer race",
+      "fpt_index": 29,
+      "healthy_fraction": 0.558,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.558,
+        "b10_3sd_c10": 0.558,
+        "b30_3sd_c10": 0.596,
+        "b30_4sd_c30": null,
+        "b10pct_3sd_c10": 0.558
+      },
+      "rms_first_g": 0.973,
+      "rms_last_g": 9.217,
+      "rms_ratio_last_first": 9.5,
+      "kurtosis_last": 3.01,
+      "bpfo_prominence_end_minus_start": 0.308,
+      "bpfi_prominence_end_minus_start": 0.055
+    },
+    "Bearing2_1": {
+      "condition": "37.5Hz11kN",
+      "lifetime_min": 491,
+      "failure": "inner race",
+      "fpt_index": 452,
+      "healthy_fraction": 0.921,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.921,
+        "b10_3sd_c10": 0.921,
+        "b30_3sd_c10": 0.921,
+        "b30_4sd_c30": 0.921,
+        "b10pct_3sd_c10": 0.921
+      },
+      "rms_first_g": 0.44,
+      "rms_last_g": 7.161,
+      "rms_ratio_last_first": 16.3,
+      "kurtosis_last": 5.83,
+      "bpfo_prominence_end_minus_start": -0.159,
+      "bpfi_prominence_end_minus_start": -0.046
+    },
+    "Bearing2_2": {
+      "condition": "37.5Hz11kN",
+      "lifetime_min": 161,
+      "failure": "outer race",
+      "fpt_index": 46,
+      "healthy_fraction": 0.286,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.286,
+        "b10_3sd_c10": 0.286,
+        "b30_3sd_c10": 0.286,
+        "b30_4sd_c30": 0.286,
+        "b10pct_3sd_c10": 0.286
+      },
+      "rms_first_g": 0.515,
+      "rms_last_g": 7.664,
+      "rms_ratio_last_first": 14.9,
+      "kurtosis_last": 5.28,
+      "bpfo_prominence_end_minus_start": 1.208,
+      "bpfi_prominence_end_minus_start": -0.052
+    },
+    "Bearing2_3": {
+      "condition": "37.5Hz11kN",
+      "lifetime_min": 533,
+      "failure": "cage",
+      "fpt_index": 127,
+      "healthy_fraction": 0.238,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.238,
+        "b10_3sd_c10": 0.238,
+        "b30_3sd_c10": 0.238,
+        "b30_4sd_c30": 0.291,
+        "b10pct_3sd_c10": 0.244
+      },
+      "rms_first_g": 0.433,
+      "rms_last_g": 5.042,
+      "rms_ratio_last_first": 11.6,
+      "kurtosis_last": 3.97,
+      "bpfo_prominence_end_minus_start": 0.167,
+      "bpfi_prominence_end_minus_start": -0.018
+    },
+    "Bearing2_4": {
+      "condition": "37.5Hz11kN",
+      "lifetime_min": 42,
+      "failure": "outer race",
+      "fpt_index": 13,
+      "healthy_fraction": 0.31,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.31,
+        "b10_3sd_c10": 0.31,
+        "b30_3sd_c10": 0.714,
+        "b30_4sd_c30": null,
+        "b10pct_3sd_c10": 0.31
+      },
+      "rms_first_g": 0.538,
+      "rms_last_g": 6.331,
+      "rms_ratio_last_first": 11.8,
+      "kurtosis_last": 2.76,
+      "bpfo_prominence_end_minus_start": 0.107,
+      "bpfi_prominence_end_minus_start": 0.244
+    },
+    "Bearing2_5": {
+      "condition": "37.5Hz11kN",
+      "lifetime_min": 339,
+      "failure": "outer race",
+      "fpt_index": 121,
+      "healthy_fraction": 0.357,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.357,
+        "b10_3sd_c10": 0.357,
+        "b30_3sd_c10": 0.357,
+        "b30_4sd_c30": 0.383,
+        "b10pct_3sd_c10": 0.357
+      },
+      "rms_first_g": 1.127,
+      "rms_last_g": 8.45,
+      "rms_ratio_last_first": 7.5,
+      "kurtosis_last": 3.08,
+      "bpfo_prominence_end_minus_start": 0.584,
+      "bpfi_prominence_end_minus_start": 0.065
+    },
+    "Bearing3_1": {
+      "condition": "40Hz10kN",
+      "lifetime_min": 2538,
+      "failure": "outer race",
+      "fpt_index": 16,
+      "healthy_fraction": 0.006,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.006,
+        "b10_3sd_c10": 0.006,
+        "b30_3sd_c10": 0.935,
+        "b30_4sd_c30": 0.937,
+        "b10pct_3sd_c10": 0.924
+      },
+      "rms_first_g": 0.509,
+      "rms_last_g": 9.125,
+      "rms_ratio_last_first": 17.9,
+      "kurtosis_last": 4.66,
+      "bpfo_prominence_end_minus_start": 0.764,
+      "bpfi_prominence_end_minus_start": 0.118
+    },
+    "Bearing3_2": {
+      "condition": "40Hz10kN",
+      "lifetime_min": 2496,
+      "failure": "inner race, ball, cage, outer race",
+      "fpt_index": 83,
+      "healthy_fraction": 0.033,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.033,
+        "b10_3sd_c10": 0.067,
+        "b30_3sd_c10": 0.492,
+        "b30_4sd_c30": 0.66,
+        "b10pct_3sd_c10": 0.493
+      },
+      "rms_first_g": 0.885,
+      "rms_last_g": 5.749,
+      "rms_ratio_last_first": 6.5,
+      "kurtosis_last": 3.04,
+      "bpfo_prominence_end_minus_start": 0.234,
+      "bpfi_prominence_end_minus_start": -0.079
+    },
+    "Bearing3_3": {
+      "condition": "40Hz10kN",
+      "lifetime_min": 371,
+      "failure": "inner race",
+      "fpt_index": 341,
+      "healthy_fraction": 0.919,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.919,
+        "b10_3sd_c10": 0.919,
+        "b30_3sd_c10": 0.919,
+        "b30_4sd_c30": 0.919,
+        "b10pct_3sd_c10": 0.919
+      },
+      "rms_first_g": 0.54,
+      "rms_last_g": 4.959,
+      "rms_ratio_last_first": 9.2,
+      "kurtosis_last": 3.94,
+      "bpfo_prominence_end_minus_start": -0.018,
+      "bpfi_prominence_end_minus_start": -0.032
+    },
+    "Bearing3_4": {
+      "condition": "40Hz10kN",
+      "lifetime_min": 1515,
+      "failure": "inner race",
+      "fpt_index": 1417,
+      "healthy_fraction": 0.935,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.935,
+        "b10_3sd_c10": 0.935,
+        "b30_3sd_c10": 0.935,
+        "b30_4sd_c30": 0.935,
+        "b10pct_3sd_c10": 0.935
+      },
+      "rms_first_g": 0.545,
+      "rms_last_g": 4.282,
+      "rms_ratio_last_first": 7.9,
+      "kurtosis_last": 5.52,
+      "bpfo_prominence_end_minus_start": 0.259,
+      "bpfi_prominence_end_minus_start": 0.105
+    },
+    "Bearing3_5": {
+      "condition": "40Hz10kN",
+      "lifetime_min": 114,
+      "failure": "outer race",
+      "fpt_index": 10,
+      "healthy_fraction": 0.088,
+      "healthy_fraction_by_fpt_rule": {
+        "b10_3sd_c3": 0.088,
+        "b10_3sd_c10": 0.088,
+        "b30_3sd_c10": null,
+        "b30_4sd_c30": null,
+        "b10pct_3sd_c10": 0.096
+      },
+      "rms_first_g": 0.7,
+      "rms_last_g": 7.021,
+      "rms_ratio_last_first": 10.0,
+      "kurtosis_last": 3.17,
+      "bpfo_prominence_end_minus_start": 0.335,
+      "bpfi_prominence_end_minus_start": 0.219
+    }
+  },
+  "figures": [
+    "rms_trajectories.png"
+  ],
+  "runtime_s": 150.4,
+  "quick": false
+}

@@ -84,8 +84,13 @@ def test_existing_good_file_is_not_downloaded_again(tmp_path):
 
 def test_fetch_dataset_writes_a_manifest(server, tmp_path, monkeypatch):
     source = DatasetSource(
-        name="toy", title="toy", kind="direct", role="optional", licence="CC0",
-        citation="none", homepage="https://example.org",
+        name="toy",
+        title="toy",
+        kind="direct",
+        role="optional",
+        licence="CC0",
+        citation="none",
+        homepage="https://example.org",
         files=(RemoteFile(f"{server}/a.bin", "sub/a.bin", sha256=DIGEST),),
     )
     monkeypatch.setitem(fetch.SOURCES, "toy", source)
@@ -128,8 +133,14 @@ def test_exclude_skips_matching_paths(server, tmp_path, monkeypatch):
         RemoteFile(f"{server}/s.bin", "spec/x/s.bin", sha256=DIGEST),
     )
     source = DatasetSource(
-        name="toy", title="toy", kind="direct", role="optional", licence="CC0",
-        citation="none", homepage="https://example.org", files=files,
+        name="toy",
+        title="toy",
+        kind="direct",
+        role="optional",
+        licence="CC0",
+        citation="none",
+        homepage="https://example.org",
+        files=files,
     )
     monkeypatch.setitem(fetch.SOURCES, "toy", source)
     monkeypatch.setattr(fetch, "get_source", lambda name: fetch.SOURCES[name])
@@ -143,8 +154,14 @@ def test_parallel_fetch_records_every_file(server, tmp_path, monkeypatch):
         RemoteFile(f"{server}/f{i}.bin", f"dir/f{i}.bin", sha256=DIGEST) for i in range(5)
     )
     source = DatasetSource(
-        name="toy", title="toy", kind="direct", role="optional", licence="CC0",
-        citation="none", homepage="https://example.org", files=files,
+        name="toy",
+        title="toy",
+        kind="direct",
+        role="optional",
+        licence="CC0",
+        citation="none",
+        homepage="https://example.org",
+        files=files,
     )
     monkeypatch.setitem(fetch.SOURCES, "toy", source)
     monkeypatch.setattr(fetch, "get_source", lambda name: fetch.SOURCES[name])
@@ -201,3 +218,60 @@ def test_extract_unzips_and_copies(tmp_path):
     assert (out / "vibration" / "0Nm_Normal.mat").read_bytes() == b"data"
     assert (out / "readme.pdf").exists()
     assert not (out / "MANIFEST.json").exists()
+
+
+def test_zips_with_clashing_member_names_get_their_own_folders(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for name, payload in (("vibration.zip", b"vib"), ("acoustic.zip", b"mic")):
+        with zipfile.ZipFile(raw / name, "w") as archive:
+            archive.writestr("0Nm_BPFI_03.mat", payload)  # same member name in both
+    out = fetch.extract_dataset("toy", root=raw, out=tmp_path / "out")
+    assert (out / "vibration" / "0Nm_BPFI_03.mat").read_bytes() == b"vib"
+    assert (out / "acoustic" / "0Nm_BPFI_03.mat").read_bytes() == b"mic"
+
+
+def _manual_source(monkeypatch):
+    source = DatasetSource(
+        name="toy",
+        title="toy",
+        kind="manual",
+        role="target",
+        licence="none stated",
+        citation="none",
+        homepage="https://example.org",
+        params={"required": ["c1.zip", "c4.zip"]},
+    )
+    monkeypatch.setitem(fetch.SOURCES, "toy", source)
+    monkeypatch.setattr(fetch, "get_source", lambda name: fetch.SOURCES[name])
+
+
+def test_verify_reports_missing_required_files(tmp_path, monkeypatch):
+    _manual_source(monkeypatch)
+    (tmp_path / "c1.zip").write_bytes(b"one")
+    report = fetch.verify_dataset("toy", root=tmp_path)
+    assert not report["ok"] and report["missing"] == ["c4.zip"]
+    assert report["added"] == ["c1.zip"]
+
+
+def test_verify_records_hand_placed_files_then_detects_changes(tmp_path, monkeypatch):
+    _manual_source(monkeypatch)
+    for name in ("c1.zip", "c4.zip"):
+        (tmp_path / name).write_bytes(name.encode())
+    first = fetch.verify_dataset("toy", root=tmp_path)
+    assert first["ok"] and sorted(first["added"]) == ["c1.zip", "c4.zip"]
+    manifest = json.loads((tmp_path / "MANIFEST.json").read_text())
+    assert manifest["files"]["c1.zip"]["origin"] == "manual"
+    second = fetch.verify_dataset("toy", root=tmp_path)
+    assert second["ok"] and second["checked"] == 2 and second["added"] == []
+    (tmp_path / "c4.zip").write_bytes(b"altered after copying")
+    third = fetch.verify_dataset("toy", root=tmp_path)
+    assert not third["ok"] and third["mismatch"] == ["c4.zip"]
+
+
+def test_verify_cli_exits_non_zero_when_incomplete(tmp_path, monkeypatch):
+    _manual_source(monkeypatch)
+    monkeypatch.setattr(fetch, "raw_dir", lambda name: tmp_path)
+    with pytest.raises(SystemExit) as exit_info:
+        fetch.main(["verify", "phm2010"])
+    assert exit_info.value.code == 1

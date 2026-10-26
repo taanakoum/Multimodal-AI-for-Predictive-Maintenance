@@ -1,0 +1,38 @@
+name: Data sources
+
+# Weekly check that the data sources still answer and still serve the files we used.
+# The reachability table never fails the job; the network tests do, because a changed
+# size or hash means a publisher altered a dataset. See docs/CI.md.
+on:
+  schedule:
+    - cron: "17 5 * * 1"  # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sources:
+    name: Reachability and integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PDMFM_NETWORK_TESTS: "1"
+      PDMFM_DATA_ROOT: ${{ github.workspace }}/.ci-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Create environment
+        run: |
+          uv venv
+          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -e ".[dev]"
+      - name: Reachability table
+        run: |
+          uv run --no-sync python scripts/ci/check_sources.py --markdown sources.md
+          { echo "## Data sources"; cat sources.md; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Integrity of stable sources
+        run: uv run --no-sync pytest -m network -rs tests/test_network.py

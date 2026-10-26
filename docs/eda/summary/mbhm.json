@@ -1,0 +1,79 @@
+{
+  "windows_by_dataset_and_label": {
+    "CWRU": {
+      "Normal State": 70,
+      "Bearing Inner Ring Minor Fault": 310,
+      "Bearing Inner Ring General Fault": 296,
+      "Bearing Inner Ring Severe Fault": 350,
+      "Bearing Ball Minor Fault": 310,
+      "Bearing Ball General Fault": 310,
+      "Bearing Ball Severe Fault": 350,
+      "Bearing Outer Ring Minor Fault": 918,
+      "Bearing Outer Ring General Fault": 340,
+      "Bearing Outer Ring Severe Fault": 678
+    },
+    "DIRG": {
+      "Normal State": 1020,
+      "Bearing Inner Ring Minor Fault": 1020,
+      "Bearing Inner Ring General Fault": 1020,
+      "Bearing Inner Ring Severe Fault": 1020,
+      "Bearing Ball Minor Fault": 1020,
+      "Bearing Ball General Fault": 1020,
+      "Bearing Ball Severe Fault": 1020
+    },
+    "HIT": {
+      "Normal State": 3816,
+      "Bearing Inner Ring General Fault": 4032,
+      "Bearing Outer Ring General Fault": 1800
+    },
+    "IMS": {
+      "Normal State": 43176,
+      "Bearing Inner Ring Minor Fault": 812,
+      "Bearing Ball General Fault": 1000,
+      "Bearing Ball Severe Fault": 312,
+      "Bearing Outer Ring Minor Fault": 575,
+      "Bearing Outer Ring General Fault": 447,
+      "Bearing Outer Ring Severe Fault": 158
+    },
+    "JUST": {
+      "Normal State": 10932,
+      "Bearing Inner Ring General Fault": 11124,
+      "Bearing Ball General Fault": 10956,
+      "Bearing Outer Ring General Fault": 10974
+    },
+    "MFPT": {
+      "Normal State": 18,
+      "Bearing Inner Ring General Fault": 21,
+      "Bearing Outer Ring General Fault": 39
+    },
+    "NCEPU": {
+      "Normal State": 900,
+      "Bearing Inner Ring General Fault": 900,
+      "Bearing Ball General Fault": 900,
+      "Bearing Outer Ring General Fault": 900
+    },
+    "PU": {
+      "Normal State": 1918,
+      "Bearing Inner Ring Minor Fault": 954,
+      "Bearing Inner Ring General Fault": 633,
+      "Bearing Outer Ring Minor Fault": 2223,
+      "Bearing Outer Ring General Fault": 1588
+    },
+    "XJTU": {
+      "Normal State": 11014,
+      "Bearing Inner Ring Minor Fault": 64,
+      "Bearing Inner Ring General Fault": 28,
+      "Bearing Inner Ring Severe Fault": 232,
+      "Bearing Ball Minor Fault": 30,
+      "Bearing Ball General Fault": 60,
+      "Bearing Ball Severe Fault": 356,
+      "Bearing Outer Ring Minor Fault": 284,
+      "Bearing Outer Ring General Fault": 260,
+      "Bearing Outer Ring Severe Fault": 1008
+    }
+  },
+  "usable_windows_without_PU_XJTU": 114864,
+  "figures": [],
+  "runtime_s": 0.1,
+  "quick": false
+}

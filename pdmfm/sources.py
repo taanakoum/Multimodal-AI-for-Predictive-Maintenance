@@ -62,12 +62,34 @@ CWRU_FILES: dict[int, tuple[str, float, int]] = {
 # Paderborn bearing codes (Lessmeier et al., PHME 2016, Tables 4, 5 and 7).
 PADERBORN_HEALTHY = ("K001", "K002", "K003", "K004", "K005", "K006")
 PADERBORN_ARTIFICIAL = (
-    "KA01", "KA03", "KA05", "KA06", "KA07", "KA08", "KA09",
-    "KI01", "KI03", "KI05", "KI07", "KI08",
+    "KA01",
+    "KA03",
+    "KA05",
+    "KA06",
+    "KA07",
+    "KA08",
+    "KA09",
+    "KI01",
+    "KI03",
+    "KI05",
+    "KI07",
+    "KI08",
 )
 PADERBORN_REAL = (
-    "KA04", "KA15", "KA16", "KA22", "KA30", "KB23", "KB24", "KB27",
-    "KI04", "KI14", "KI16", "KI17", "KI18", "KI21",
+    "KA04",
+    "KA15",
+    "KA16",
+    "KA22",
+    "KA30",
+    "KB23",
+    "KB24",
+    "KB27",
+    "KI04",
+    "KI14",
+    "KI16",
+    "KI17",
+    "KI18",
+    "KI21",
 )
 # Plan split: healthy K001-K003 join the source pool, K004-K006 the real-damage target.
 PADERBORN_SOURCE = PADERBORN_HEALTHY[:3] + PADERBORN_ARTIFICIAL
@@ -188,9 +210,34 @@ SOURCES: dict[str, DatasetSource] = {
         citation="PHM Society 2010 Conference Data Challenge, "
         "https://phmsociety.org/phm_competition/2010-phm-society-conference-data-challenge/",
         homepage="https://phmsociety.org/phm_competition/2010-phm-society-conference-data-challenge/",
-        notes="The original CDN (cdn.teamholistic.net) now serves a parking page. Mirrors need "
-        "an account: Hugging Face AI4Manufacturing/PHM2010 (gated), IEEE DataPort, Kaggle. "
-        "Place c1.zip, c4.zip, c6.zip in the raw folder by hand.",
+        params={
+            "required": ["c1.zip", "c4.zip", "c6.zip"],
+            "optional": ["c2.zip", "c3.zip", "c5.zip"],
+        },
+        notes="The original CDN (cdn.teamholistic.net) now serves a parking page. Get the original "
+        "c1/c4/c6 zips from IEEE DataPort or Kaggle, place them in the raw folder and run "
+        "`python -m pdmfm.fetch verify phm2010`. The Hugging Face mirror AI4Manufacturing/PHM2010 "
+        "is gated with manual approval, has a placeholder card and no licence, and repackages the "
+        "data as parquet; it is not used.",
+    ),
+    "nasa_milling": DatasetSource(
+        name="nasa_milling",
+        title="NASA Ames milling data set (UC Berkeley mill, flank wear)",
+        kind="direct",
+        role="optional",
+        licence="NASA open data (U.S. Government work); cite the data set",
+        citation="A. Agogino, K. Goebel, Milling Data Set, NASA Prognostics Data Repository, "
+        "NASA Ames Research Center, 2007.",
+        homepage="https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/"
+        "pcoe/pcoe-data-set-repository/",
+        files=(
+            RemoteFile(
+                url="https://phm-datasets.s3.amazonaws.com/NASA/3.+Milling.zip",
+                relpath="3_Milling.zip",
+                size=14731306,
+            ),
+        ),
+        notes="Alternative milling target if PHM 2010 cannot be obtained (14.7 MB).",
     ),
     "mbhm": DatasetSource(
         name="mbhm",

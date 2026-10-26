@@ -29,6 +29,14 @@ dist/
 /runs/
 /outputs/
 /logs/
+net_check-*.out
+
+# Test and CI outputs (docs/CI.md)
+.coverage
+coverage.xml
+junit.xml
+/sources.md
+/.ci-data/
 
 # Editors and OS
 .vscode/

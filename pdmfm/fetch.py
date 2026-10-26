@@ -7,6 +7,7 @@ Usage::
     python -m pdmfm.fetch get kaist             # resumable download into raw/kaist
     python -m pdmfm.fetch get mbhm --include-large
     python -m pdmfm.fetch extract kaist         # zip and rar archives into extracted/kaist
+    python -m pdmfm.fetch verify phm2010        # hand-placed or copied files: hash and check
 
 Every completed file is checked against the publisher's size and SHA-256 when they are
 known, and recorded in ``raw/<dataset>/MANIFEST.json`` with its own SHA-256, so a copy on
@@ -349,6 +350,17 @@ def _extract_rar(archive: Path, destination: Path) -> None:
         raise DownloadError(f"could not extract {archive.name}: {result.stderr.strip()[:500]}")
 
 
+def _zip_target(archive: zipfile.ZipFile, parent: Path, path: Path) -> Path:
+    """Where a zip unpacks: into ``parent`` when all its members share one top folder,
+    otherwise into ``parent/<zip stem>`` so that two archives with the same member names
+    (KAIST's vibration.zip and acoustic.zip) cannot overwrite each other."""
+    tops = {Path(name).parts[0] for name in archive.namelist() if Path(name).parts}
+    single_folder = len(tops) == 1 and all(
+        len(Path(name).parts) > 1 or name.endswith("/") for name in archive.namelist()
+    )
+    return parent if single_folder else parent / path.stem
+
+
 def extract_dataset(name: str, root: Path | None = None, out: Path | None = None) -> Path:
     """Unpack every zip and rar archive of ``name``; non-archive files are copied as they are."""
     source_dir = root or raw_dir(name)
@@ -360,7 +372,7 @@ def extract_dataset(name: str, root: Path | None = None, out: Path | None = None
         relative = path.relative_to(source_dir)
         if path.suffix.lower() == ".zip":
             with zipfile.ZipFile(path) as archive:
-                archive.extractall(destination / relative.parent)
+                archive.extractall(_zip_target(archive, destination / relative.parent, path))
         elif path.suffix.lower() == ".rar":
             if ".part" in path.stem and not path.stem.endswith(("part01", "part1")):
                 continue  # later volumes are read through the first one
@@ -375,7 +387,80 @@ def extract_dataset(name: str, root: Path | None = None, out: Path | None = None
     return destination
 
 
+# ----------------------------------------------------------------------------- verification
+
+
+def verify_dataset(name: str, root: Path | None = None) -> dict:
+    """Check a dataset's raw folder against its manifest (and its required files).
+
+    * Files in the manifest are re-hashed: a different SHA-256 is a ``mismatch``.
+    * Files on disk but not in the manifest (placed by hand, e.g. PHM 2010 zips or a
+      Paderborn copy brought back from Ruche) are hashed and added with origin ``manual``.
+    * For manual sources, ``params["required"]`` files must be present.
+
+    Returns a report dict with ``ok`` False when anything is missing or mismatched.
+    """
+    source = get_source(name)
+    target = root or raw_dir(name)
+    manifest_path = target / "MANIFEST.json"
+    manifest = _read_manifest(manifest_path)
+    manifest.update(
+        dataset=name, licence=source.licence, citation=source.citation, homepage=source.homepage
+    )
+    entries = manifest.setdefault("files", {})
+    report = {"dataset": name, "checked": 0, "added": [], "mismatch": [], "missing": []}
+    on_disk = (
+        {
+            p.relative_to(target).as_posix(): p
+            for p in target.rglob("*")
+            if p.is_file() and p.name != "MANIFEST.json" and not p.name.endswith((".part", ".tmp"))
+        }
+        if target.is_dir()
+        else {}
+    )
+    for relpath, entry in sorted(entries.items()):
+        path = on_disk.get(relpath)
+        if path is None:
+            report["missing"].append(relpath)
+            continue
+        report["checked"] += 1
+        if sha256_of(path) != entry["sha256"]:
+            report["mismatch"].append(relpath)
+    for relpath, path in sorted(on_disk.items()):
+        if relpath in entries:
+            continue
+        entries[relpath] = {
+            "url": None,
+            "origin": "manual",
+            "size": path.stat().st_size,
+            "sha256": sha256_of(path),
+            "publisher_sha256": None,
+            "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+        report["added"].append(relpath)
+    for required in source.params.get("required", []):
+        if required not in on_disk:
+            report["missing"].append(required)
+    if target.is_dir():
+        _write_manifest(manifest_path, manifest)
+    report["ok"] = not report["missing"] and not report["mismatch"]
+    return report
+
+
 # ----------------------------------------------------------------------------- command line
+
+
+def _cmd_verify(args: argparse.Namespace) -> None:
+    report = verify_dataset(args.dataset)
+    print(
+        f"{args.dataset}: {report['checked']} files verified, {len(report['added'])} added, "
+        f"{len(report['mismatch'])} mismatched, {len(report['missing'])} missing"
+    )
+    for key in ("mismatch", "missing", "added"):
+        for relpath in report[key]:
+            print(f"  {key}: {relpath}")
+    if not report["ok"]:
+        raise DownloadError(f"{args.dataset} is incomplete or altered")
 
 
 def _cmd_list(_: argparse.Namespace) -> None:
@@ -422,9 +507,7 @@ def main(argv: list[str] | None = None) -> None:
         if command == "get":
             p.add_argument("--only", help="download only files whose path contains this text")
             p.add_argument("--workers", type=int, default=1, help="parallel HTTP downloads")
-            p.add_argument(
-                "--seed-from", type=Path, help="local copy to reuse when hashes match"
-            )
+            p.add_argument("--seed-from", type=Path, help="local copy to reuse when hashes match")
             p.add_argument(
                 "--exclude", action="append", default=[], help="skip paths containing this"
             )
@@ -432,6 +515,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("extract")
     p.add_argument("dataset", choices=sorted(SOURCES))
     p.set_defaults(func=_cmd_extract)
+    p = sub.add_parser("verify", help="re-hash files against MANIFEST.json; add hand-placed files")
+    p.add_argument("dataset", choices=sorted(SOURCES))
+    p.set_defaults(func=_cmd_verify)
     args = parser.parse_args(argv)
     try:
         args.func(args)

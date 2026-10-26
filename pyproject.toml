@@ -22,6 +22,8 @@ dependencies = [
     "requests>=2.31",
     "tqdm>=4.66",
     "huggingface_hub>=0.24",
+    "psutil>=5.9",
+    "pandas>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +39,8 @@ forecast = ["timesfm[torch]>=2.5"]
 # Explanations and photo anomaly maps.
 xai = ["captum>=0.7"]
 anomaly = ["anomalib>=1.1"]
-dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1.380"]
+eda = ["matplotlib>=3.8", "pypdf>=4.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff==0.17.2", "pyright>=1.1.380", "pre-commit>=3.7", "actionlint-py>=1.7"]
 
 [project.scripts]
 pdmfm-fetch = "pdmfm.fetch:main"
@@ -48,7 +51,11 @@ include = ["pdmfm*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-markers = ["network: needs internet access (skipped unless PDMFM_NETWORK_TESTS=1)"]
+markers = [
+    "network: needs internet access (skipped unless PDMFM_NETWORK_TESTS=1)",
+    "data(name, extracted=False): reads a real dataset; skipped when it is not downloaded",
+    "slow: takes more than a few seconds",
+]
 
 [tool.ruff]
 line-length = 100

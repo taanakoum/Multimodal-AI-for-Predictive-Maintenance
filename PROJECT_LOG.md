@@ -2,16 +2,17 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-10-25)
+## Status at a glance (updated 2026-10-26)
 
 | Area | State |
 | --- | --- |
-| Phase | Week 1 (planned Oct 26 to Nov 1; started Oct 25) |
-| Repository, environment, tests | Done: package skeleton, downloader, 14 offline tests, lint clean |
-| Datasets on `D:\Project14\data` | Done: CWRU, Najafi thermal, MBHM metadata, Nonastreda (your local copy reused, chip and workpiece photos added). XJTU-SY (extracted, verified), KAIST. **Blocked:** Paderborn (host refuses connections), PHM 2010 (original host gone) |
+| Phase | Week 1 done early; week-2 data layer (schema, readers, preprocessing) implemented and tested |
+| Repository, environment, tests | 122 tests, of which 113 pass with the local data (9 skip: 5 network, 4 acceptance tests awaiting Paderborn and PHM 2010); lint and format clean; pre-commit hooks pass |
+| CI | GitHub Actions workflows written and reproduced locally on fresh Python 3.11 and 3.12 environments (104 passed, 18 data/network skips, 91 % coverage). Runs on GitHub after your next push (repository and remote already exist) |
+| Datasets on `D:\Project14\data` | Done: CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata. **Blocked:** Paderborn, PHM 2010 (infrastructure and acceptance tests ready) |
+| EDA | `docs/EDA_REPORT.md`: 13 findings, three of them new preprocessing rules (5 kHz common band, measured shaft speed, FPT rule for RUL labels) |
 | Encoders | All 7 load and run on CPU (Mantis, MOMENT-base, DINOv2-S, Qwen3-Embedding, AST, TimesFM 3.0, TimesFM 2.5) |
-| Week-1 checklist | 10 of 12 settled; the 2 open items need your input (PHM 2010 access, Ruche network test) |
-| Needs your input | PHM 2010 access, Paderborn route, Ruche network test (see "Needs your input") |
+| Needs you | `docs/USER_ACTIONS.md`: PHM 2010, Paderborn, Ruche network check, GitHub repository and CI, pre-commit, commits, 3 decisions |
 
 ## Week 1 — setup, downloads and verification
 
@@ -154,3 +155,87 @@ Week 2 (Nov 2-8, plan):
 | 2026-10-25 | Nonastreda: reuse your `Data\Nonastreda_Data` (hash-verified), download only chip and workpiece photos, skip precomputed spectrograms and scalograms | Your request; spectrograms and scalograms cover whole passes and are not used by the plan |
 | 2026-10-25 | KAIST fusion treated as condition-level pairing (not sample-synchronous) | Clock offset between the two devices and 5 non-simultaneous recordings |
 | 2026-10-25 | Gate 1 on CPU: Mantis on all arms; MOMENT T arm and AST on a 10 % unit-stratified subsample | Full MOMENT T-arm or AST caching takes about 40 h on this CPU |
+
+## Week 1, continued (2026-10-26): data layer, EDA, CI
+
+### What can be implemented and tested now, on this CPU
+
+| Work | Status | Why it is reliable locally |
+| --- | --- | --- |
+| Sample schema and as-of join (`pdmfm/schema.py`) | Done, tested | Pure logic |
+| Readers for the 7 local datasets (`pdmfm/datasets/`) | Done; tested on synthetic files and on the real data | Data on disk |
+| Shared preprocessing (`pdmfm/preprocess.py`) | Done, tested; 5 kHz common band and tachless speed added after the EDA | Numerical tests on synthetic signals |
+| CPU/RAM guard (`pdmfm/resources.py`) | Done, used by the EDA | — |
+| EDA and report | Done (`docs/EDA_REPORT.md`) | Full run about 5 min |
+| Next: context and fault-description texts (`pdmfm/texts/*.yaml`) | Not started | No compute |
+| Next: unit-level split protocols (`pdmfm/protocols.py`) | Not started | Pure logic |
+| Next: feature cache, filled with Mantis (279 windows/s) and DINOv2 (5.4 images/s) | Not started | All local datasets in under an hour |
+| Next: Gate-1 encoder probe | Not started | Mantis on every arm; MOMENT and AST on a 10 % unit-stratified subsample (full T-arm caching takes about 40 h on this CPU) |
+| Next: Plan B (per-modality evidential heads) and a small fusion search on cached features | Not started | Small tensors |
+| Blocked: Paderborn and PHM 2010 adapters | Infrastructure ready | Data (your steps 1-2) |
+| Later on Ruche: full MOMENT/AST caching, PatchTST self-pretraining, fusion pretraining, adaptation sweeps | — | Too slow for CPU |
+
+### What was implemented
+
+| File | Purpose |
+| --- | --- |
+| `pdmfm/schema.py` | `ChannelWindow`, `ImageItem`, `Sample`; as-of join (newest item strictly before the window start) |
+| `pdmfm/preprocess.py` | Exact-ratio resampling to 12 kHz, **5 kHz common band (`band_limit`, `model_input`)**, windows, T/F/E arms, **`dominant_frequency`**, level and slow descriptors, healthy baselines, defect frequencies, FPT, normalized RUL |
+| `pdmfm/datasets/` | Readers: CWRU, KAIST, XJTU-SY, Nonastreda, Najafi, NASA milling; Paderborn and PHM 2010 written against their documentation (`VERIFIED_ON_REAL_DATA = False`) |
+| `pdmfm/resources.py` | Checks idle CPUs, free RAM and busy processes before heavy jobs; caps threads (torch, BLAS); aware of SLURM |
+| `pdmfm/fetch.py` | New `verify` command: re-hashes against `MANIFEST.json`, records hand-placed files (PHM 2010), checks required files |
+| `scripts/eda/run_eda.py` | EDA of every dataset on disk; summaries and figures in `docs/eda/` |
+| `.github/workflows/tests.yml`, `sources.yml`, `dependabot.yml`, `.pre-commit-config.yaml` | CI on every push; weekly data-source check; dependency updates; local hooks (`docs/CI.md`) |
+| `scripts/ci/run_local_ci.sh`, `scripts/ci/check_sources.py` | CI reproduced in a fresh environment; host reachability table |
+| `scripts/ruche/setup_env.sh`, `net_check.sbatch` (rewritten), `fetch_paderborn.sh` (verifies after download) | Your Ruche steps (`docs/USER_ACTIONS.md`) |
+| Tests | `test_schema`, `test_preprocess`, `test_readers`, `test_resources`, `test_eda`, `test_real_data` (regression and acceptance), `test_network`, `test_fetch` (+ `verify`) |
+
+### Findings (details and numbers in `docs/EDA_REPORT.md`)
+
+1. **CWRU recorder artifact.** The 48 kHz normal files and the 12 kHz fault files differ above
+   5.25 kHz; that band alone separates normal from fault (balanced accuracy 1.0). Fixed for all
+   sources by a 5 kHz linear-phase band limit and by spectra that end at 5 kHz.
+2. **KAIST sessions are confounded with class.** Normal, unbalance and misalignment were recorded
+   on 25 June, inner race on 28 June, outer race on 30 June. Temperature follows the session and
+   is constant within a recording, so it is excluded as an absolute input.
+3. **KAIST current fundamental (48.5 Hz) sits below the shaft rate (50.17 Hz).** That is
+   consistent with the electrical device's stated sample rate being about 3.4 % low (open
+   question).
+4. **KAIST cross-load floor.** Vibration 0.526 (15 classes), 0.734 (5 types); current and
+   temperature at chance.
+5. **XJTU-SY RUL labels.** The default 3σ FPT fires at 0.6 % of life on Bearing3_1. A baseline of
+   10 % of life, 3σ and 10 consecutive exceedances gives no early alarms and an onset for 14 of 15
+   bearings; it is recommended for offline labels.
+6. **XJTU-SY envelope lines.** Outer-race failures show their line in every case; inner-race
+   failures do not. The physics score there is restricted to the outer race.
+7. **Nonastreda baselines.** Label persistence is 78.8 %, above the published ~75 %, so it goes in
+   every table. The leave-one-tool-out floor from Fx/Fy levels is 0.566. Fz drifts by block.
+8. **Nonastreda 66.665 Hz line.** Constant in all passes and phase-locked over 15 samples; most
+   consistent with a 4,000 rpm spindle and a 4-flute cutter, with aliased tooth harmonics
+   (unconfirmed).
+9. **Najafi.** Near-duplicate images, trivially separable (1.0 under any split): never evidence.
+
+### Infrastructure for your steps
+
+- **PHM 2010.** Drop the zips in the raw folder; `python -m pdmfm.fetch verify phm2010`;
+  `extract`; acceptance tests check 315 cuts, wear in µm, 7 columns and the 10,400 rpm spindle
+  line.
+- **Paderborn.** `scripts/ruche/setup_env.sh` and `fetch_paderborn.sh` on Ruche; `scp` back;
+  `verify` catches copy damage; acceptance tests check 32 bearings × 80 files, 64 kHz and the
+  setting speeds. The acceptance tests themselves were dry-run against a synthetic layout built to
+  the documentation (4 passed).
+- **Ruche network check.** `net_check.sbatch` writes next to the submit directory (it no longer
+  needs `logs/`), covers 9 hosts and ends with a verdict line. It was tested locally: 8 of 9
+  hosts reachable, Paderborn refused.
+
+### Additional decisions
+
+| Date | Decision | Reason |
+| --- | --- | --- |
+| 2026-10-26 | Every sensor channel goes through `pp.model_input` (resample to 12 kHz, band-limit to 5 kHz); no log-domain feature above 5 kHz | Recorder roll-offs identify the source and, on CWRU, the class (EDA F1) |
+| 2026-10-26 | E arm uses the shaft speed measured from vibration per recording | Nominal speeds are approximations; CWRU headers agree within 0.12 %, so the method is validated |
+| 2026-10-26 | KAIST: no absolute temperature input; `current_1` only; splits by condition and load | Session confound, recording-level constants, class-dependent empty channels |
+| 2026-10-26 | XJTU-SY RUL labels from the 10 %-of-life FPT rule (kurtosis fallback for abrupt failures) | Default rule raises false early alarms on long runs |
+| 2026-10-26 | Nonastreda tables always include the persistence baseline | Persistence (78.8 %) beats the published accuracy |
+| 2026-10-26 | Ruff pinned to 0.17.2 in pyproject, pre-commit and CI | Formatting differs between versions |
+| 2026-10-26 | Nothing committed | Your instruction: you commit yourself |

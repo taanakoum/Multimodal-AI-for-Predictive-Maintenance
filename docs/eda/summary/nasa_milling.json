@@ -1,0 +1,22 @@
+{
+  "runs": 167,
+  "cases": 16,
+  "runs_with_wear": 146,
+  "wear_um_range": [
+    0.0,
+    1530.0
+  ],
+  "spearman_with_wear": {
+    "current_ac_mean": 0.594,
+    "current_dc_mean": 0.786,
+    "vib_table_rms_mean": -0.218,
+    "vib_spindle_rms_mean": -0.553,
+    "ae_table_rms_mean": 0.673,
+    "ae_spindle_rms_mean": 0.58
+  },
+  "figures": [
+    "wear_by_case.png"
+  ],
+  "runtime_s": 0.3,
+  "quick": false
+}

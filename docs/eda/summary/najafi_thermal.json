@@ -1,0 +1,45 @@
+{
+  "images": 369,
+  "classes": {
+    "stator_short_circuit": 286,
+    "cooling_fan_failure": 28,
+    "healthy": 25,
+    "stuck_rotor": 30
+  },
+  "folders": {
+    "A&B50": 38,
+    "A&C&B10": 31,
+    "A&C&B30": 42,
+    "A&C10": 31,
+    "A&C30": 38,
+    "A10": 34,
+    "A30": 37,
+    "A50": 35,
+    "Fan": 28,
+    "Noload": 25,
+    "Rotor-0": 30
+  },
+  "nearest_neighbour_distance_same_folder_median": 0.0103,
+  "nearest_neighbour_distance_other_folder_median": 0.0569,
+  "share_of_images_whose_nearest_neighbour_is_in_the_same_folder": 0.957,
+  "share_whose_same_folder_neighbour_is_within_2_files": 0.52,
+  "pixel_baseline_by_split": {
+    "random_70_30": {
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "n_train": 272,
+      "n_test": 97
+    },
+    "last_30pct_of_each_folder": {
+      "balanced_accuracy": 1.0,
+      "macro_f1": 1.0,
+      "n_train": 262,
+      "n_test": 107
+    }
+  },
+  "figures": [
+    "examples.png"
+  ],
+  "runtime_s": 5.1,
+  "quick": false
+}

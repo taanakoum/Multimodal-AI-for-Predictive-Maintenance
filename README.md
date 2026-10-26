@@ -34,18 +34,51 @@ python -m pdmfm.fetch get kaist           # resumable; verifies size and SHA-256
 python -m pdmfm.fetch extract kaist       # zip/rar archives into extracted/kaist
 ```
 
-Downloads land in `$PDMFM_DATA_ROOT/raw/<dataset>`, each with a `MANIFEST.json` that records the URL, size and SHA-256 of every file. Two datasets need a manual step; see `PROJECT_LOG.md`:
+Downloads land in `$PDMFM_DATA_ROOT/raw/<dataset>`, each with a `MANIFEST.json` that records the URL, size and SHA-256 of every file. `python -m pdmfm.fetch verify <dataset>` re-hashes a folder against its manifest and records files placed by hand.
+
+Two datasets need steps only you can take. [`docs/USER_ACTIONS.md`](docs/USER_ACTIONS.md) has the commands and the acceptance tests for each:
 - **Paderborn:** its host refuses connections from this machine; fetch it on Ruche or through a VPN.
-- **PHM 2010:** the original download host is gone; the remaining mirrors need an account.
+- **PHM 2010:** the original download host is gone; get the zips from a mirror and verify them.
+
+## Exploratory data analysis
+
+```powershell
+python scripts\eda\run_eda.py             # every dataset on disk; checks CPU and RAM first
+```
+
+The findings and their consequences for preprocessing, splits and baselines are in [`docs/EDA_REPORT.md`](docs/EDA_REPORT.md). Every sensor channel goes through `pdmfm.preprocess.model_input`: resampled to 12 kHz, then band-limited to 5 kHz, because recorders' anti-alias roll-offs above 5 kHz identify the source, and on CWRU even the class.
+
+## Tests and CI
+
+```powershell
+pytest                                    # real-data tests run when the data is on disk, skip otherwise
+bash scripts/ci/run_local_ci.sh           # CI reproduced in a fresh environment (Git Bash, uv)
+pre-commit install                        # same lint and format checks before each commit
+```
+
+GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 3.12, then an advisory type check. A weekly workflow checks that the data sources still serve the files we used. See [`docs/CI.md`](docs/CI.md).
+
+## Heavy jobs and Ruche
+
+Scripts that load the CPU call `pdmfm.resources.claim_resources` first. `python -m pdmfm.resources` shows idle CPUs, free RAM and busy processes. On Ruche, `scripts/ruche/setup_env.sh` builds the environment once and `source scripts/env/ruche.sh` loads it in every session. `scripts/ruche/net_check.sbatch` tests the compute nodes' internet access, and `prefetch_weights.sh` downloads the model weights on the login node.
 
 ## Layout
 
 ```text
-pdmfm/          package: paths, dataset registry (sources.py), downloader (fetch.py)
-tests/          offline tests (pytest)
-scripts/env/    environment scripts for the dev machine and Ruche
-docs/           plan copy and notes
-configs/        per-stage YAML configs (from week 2)
+pdmfm/            package
+  paths.py        data root and folders (PDMFM_DATA_ROOT)
+  sources.py      dataset registry: URLs, hashes, licences, split lists
+  fetch.py        resumable, hash-checked downloader; extract; verify
+  schema.py       Sample, ChannelWindow, ImageItem; as-of join of images to windows
+  preprocess.py   resampling, 5 kHz band limit, windows, T/F/E arms, descriptors, FPT, RUL
+  resources.py    CPU/RAM guard and thread caps
+  datasets/       one reader per dataset
+tests/            pytest suite (synthetic data; real-data, acceptance and network tests are marked)
+scripts/eda/      exploratory data analysis
+scripts/ci/       local CI reproduction, data-source check
+scripts/ruche/    Ruche environment, network check, Paderborn fetch, weight prefetch
+scripts/env/      environment scripts for the dev machine and Ruche
+docs/             plan copy, EDA report and figures, CI, your action list
 ```
 
 ## Licence

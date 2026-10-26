@@ -34,7 +34,9 @@ def inspect_cwru() -> dict:
         prefix = f"X{number:03d}"
         rpm_key = next((k for k in keys if k.startswith(prefix) and k.endswith("RPM")), None)
         files[number] = {
-            "class": kind, "size_in": size, "load_hp": load,
+            "class": kind,
+            "size_in": size,
+            "load_hp": load,
             "variables": keys,
             "foreign_variables": [k for k in keys if not k.startswith(f"X{number:03d}")],
             "samples": int(mat[own_de].size),
@@ -70,9 +72,7 @@ def inspect_mbhm() -> dict:
 
 def inspect_najafi_thermal() -> dict:
     root = extracted_dir("najafi_thermal")
-    folders = {
-        d.name: len(list(d.glob("*.bmp"))) for d in sorted(root.iterdir()) if d.is_dir()
-    }
+    folders = {d.name: len(list(d.glob("*.bmp"))) for d in sorted(root.iterdir()) if d.is_dir()}
     sizes = Counter(f"{Image.open(p).size} {Image.open(p).mode}" for p in root.rglob("*.bmp"))
     return {"bmp_per_folder": folders, "bmp_sizes": dict(sizes)}
 
@@ -103,9 +103,7 @@ def inspect_kaist() -> dict:
         mat = loadmat(io.BytesIO(archive.read(mat_name)))
         report["vibration_sample"] = {
             "file": mat_name,
-            "variables": {
-                k: list(np.shape(v)) for k, v in mat.items() if not k.startswith("__")
-            },
+            "variables": {k: list(np.shape(v)) for k, v in mat.items() if not k.startswith("__")},
         }
     with zipfile.ZipFile(raw / "current,temp.zip") as archive:
         tdms_name = next(n for n in archive.namelist() if n.lower().endswith(".tdms"))
@@ -135,9 +133,20 @@ def inspect_nonastreda() -> dict:
 
 # Lifetimes in minutes (= number of 1-minute snapshots) published by Wang et al. (2020).
 XJTU_SY_LIFETIMES = {
-    "Bearing1_1": 123, "Bearing1_2": 161, "Bearing1_3": 158, "Bearing1_4": 122, "Bearing1_5": 52,
-    "Bearing2_1": 491, "Bearing2_2": 161, "Bearing2_3": 533, "Bearing2_4": 42, "Bearing2_5": 339,
-    "Bearing3_1": 2538, "Bearing3_2": 2496, "Bearing3_3": 371, "Bearing3_4": 1515,
+    "Bearing1_1": 123,
+    "Bearing1_2": 161,
+    "Bearing1_3": 158,
+    "Bearing1_4": 122,
+    "Bearing1_5": 52,
+    "Bearing2_1": 491,
+    "Bearing2_2": 161,
+    "Bearing2_3": 533,
+    "Bearing2_4": 42,
+    "Bearing2_5": 339,
+    "Bearing3_1": 2538,
+    "Bearing3_2": 2496,
+    "Bearing3_3": 371,
+    "Bearing3_4": 1515,
     "Bearing3_5": 114,
 }
 
