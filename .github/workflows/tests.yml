@@ -1,11 +1,12 @@
 name: CI
 
-# Lint, type-check and test on every push and pull request; datasets are never needed
-# (tests that read real data skip themselves). See docs/CI.md.
+# Lint, type-check and test pushes to master and every pull request; datasets are never
+# needed (tests that read real data skip themselves). See docs/CI.md.
 on:
   push:
+    branches: [master]  # other branches run through their pull request, not twice
   pull_request:
-  workflow_dispatch:
+  workflow_dispatch:  # run by hand on any branch (Actions tab -> CI -> Run workflow)
 
 concurrency:
   group: ci-${{ github.ref }}

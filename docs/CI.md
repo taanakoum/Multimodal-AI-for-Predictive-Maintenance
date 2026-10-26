@@ -56,13 +56,16 @@ locally. Dependabot proposes bumps; update all three together.
 
 ## 3. GitHub Actions
 
-### `CI` (`.github/workflows/tests.yml`): every push and pull request
+### `CI` (`.github/workflows/tests.yml`): pushes to `master`, every pull request, or by hand
+
+Pushes to other branches run through their pull request, so each commit runs once, not twice.
+To test a branch without a pull request: **Actions → CI → Run workflow**.
 
 | Job | Runs on | What it does | Blocking |
 |---|---|---|---|
 | Lint and format | Ubuntu, Python 3.11 | `ruff check`, `ruff format --check`, `actionlint` (with shellcheck on `run:` blocks) | Yes |
 | Tests (4 jobs) | Ubuntu and Windows × Python 3.11 and 3.12 | Installs CPU-only torch, then `.[dev,eda]`; runs the entry points (`pdmfm.fetch list`, `pdmfm.resources`) and pytest with coverage; uploads `junit.xml` and `coverage.xml` | Yes; `fail-fast: false`, so every leg reports |
-| Type check | Ubuntu | `pyright pdmfm` | No (advisory until the code settles) |
+| Type check | Ubuntu | `pyright pdmfm` (0 errors since 2026-10-26) | No (`continue-on-error`); a red result does not fail the run |
 
 Design choices:
 - **CPU torch from the PyTorch index.** The default PyPI wheel for Linux bundles CUDA
@@ -94,6 +97,7 @@ Weekly grouped pull requests for GitHub Actions versions and Python dependencies
 | Workflow syntax and expressions | `actionlint` 1.7.12 on both workflows | No findings |
 | CI reproduced, Python 3.11 | `bash scripts/ci/run_local_ci.sh 3.11`: fresh venv in a temp folder, CPU torch, `.[dev,eda]`, no OmniFuser, empty data root, then the CI steps | **104 passed, 18 skipped** (5 network, 13 data); coverage 91 %; 108 s with a warm uv cache |
 | CI reproduced, Python 3.12 | `bash scripts/ci/run_local_ci.sh 3.12` (uv downloaded a managed 3.12) | **104 passed, 18 skipped**; coverage 91 %; 171 s |
+| Type check reproduced | `run_local_ci.sh` now ends with `pyright pdmfm`. Before the fixes, pyright against the project environment reported 9 errors: three reader robustness bugs and false alarms from the private `omnifuser` import, scipy stubs and `__doc__` under `-OO`. A CI-like environment also lacked `gdown`, a missing dependency. After the fixes | **0 errors**; 107 passed in a fresh 3.11 environment |
 | Hooks | `pre-commit run` on every tracked and untracked file | All 9 hooks pass, after two fixes it found (EDA JSON without a final newline; the renamed `ruff-check` hook id) |
 | Full local suite with real data | `pytest` with `PDMFM_DATA_ROOT=D:\Project14\data` | **111 passed, 5 skipped** (network) before the acceptance and regression tests were added; those then passed (2) or skipped (4, data absent) |
 | Acceptance tests themselves | Run against a synthetic layout built to the Paderborn and PHM 2010 documentation | 4 passed: the test code works before the real files arrive |

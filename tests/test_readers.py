@@ -291,6 +291,16 @@ def test_paderborn_reader_on_the_documented_layout(tmp_path):
     assert rec.channels["torque"].rate_hz == 4_000.0
 
 
+def test_paderborn_file_without_channels_is_reported(tmp_path):
+    folder = tmp_path / "K001"
+    folder.mkdir()
+    stem = "N15_M07_F10_K001_1"
+    savemat(folder / f"{stem}.mat", {stem: {"Info": "no Y field"}})
+    reader = get_reader("paderborn", root=tmp_path)
+    with pytest.raises(ValueError, match="no 'Y' channel list"):
+        reader.load(reader.index()[0])
+
+
 # ----------------------------------------------------------------------------- PHM 2010
 
 
@@ -309,6 +319,25 @@ def test_phm2010_reader_on_the_documented_layout(tmp_path):
     rec = reader.load(infos[0])
     assert len(rec.channels) == 7 and rec.channels["ae_rms"].family == "slow"
     assert rec.channels["vx"].rate_hz == 50_000.0 and rec.targets == {"wear_um": 32.0}
+
+
+def test_phm2010_reader_skips_csv_files_without_a_cut_number(tmp_path):
+    cutter = tmp_path / "c4"
+    cutter.mkdir()
+    (cutter / "c4_wear.csv").write_text("cut,flute_1,flute_2,flute_3\n1,30,32,31\n")
+    np.savetxt(cutter / "c_4_001.csv", RNG.standard_normal((5, 7)), delimiter=",")
+    (cutter / "notes.csv").write_text("written,by,hand\n")  # a mirror's extra file
+    infos = get_reader("phm2010", root=tmp_path).index()
+    assert [(i.unit, i.meta["cut"]) for i in infos] == [("c4", 1)]
+
+
+def test_phm2010_wear_file_without_flute_columns_is_rejected(tmp_path):
+    from pdmfm.datasets.phm2010 import read_wear
+
+    path = tmp_path / "c1_wear.csv"
+    path.write_text("cut,vb\n1,30\n")
+    with pytest.raises(ValueError, match="flute"):
+        read_wear(path)
 
 
 # ----------------------------------------------------------------------------- NASA milling

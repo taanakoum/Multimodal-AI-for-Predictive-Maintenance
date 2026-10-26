@@ -116,7 +116,10 @@ class Paderborn:
     def load(self, info: RecordingInfo) -> Recording:
         mat = loadmat(info.meta["path"], squeeze_me=True, struct_as_record=False)
         key = next(k for k in mat if not k.startswith("__"))
-        entries = np.atleast_1d(_field(mat[key], "Y"))
+        signals = _field(mat[key], "Y")
+        if signals is None:
+            raise ValueError(f"{info.meta['path']}: no 'Y' channel list; not a KAt measurement?")
+        entries = np.atleast_1d(signals)
         raw = {}
         for entry in entries:
             name = _name(_field(entry, "Name"))

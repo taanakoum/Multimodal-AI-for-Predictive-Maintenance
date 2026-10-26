@@ -28,4 +28,5 @@ run python -m pdmfm.fetch list >/dev/null
 run python -m pdmfm.resources
 run pytest -rs -p no:cacheprovider --cov=pdmfm --cov-report=term:skip-covered \
   --junitxml="$WORK/junit.xml"
+run pyright pdmfm || echo "pyright reported findings (advisory, as in CI)"
 echo "local CI (Python $PY) passed in $(($(date +%s) - start)) s"

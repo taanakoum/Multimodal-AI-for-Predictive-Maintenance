@@ -43,7 +43,8 @@ class Nonastreda:
 
     def _load_records(self):
         if self._records is None:
-            from omnifuser.data import load_nonastreda  # optional dependency, imported lazily
+            # Optional, private dependency (../OmniFuser), imported lazily; absent in CI.
+            from omnifuser.data import load_nonastreda  # pyright: ignore[reportMissingImports]
 
             records = load_nonastreda(
                 self.root, pool=1, dedup_identical_forces=self.dedup, trim_pass=self.trim

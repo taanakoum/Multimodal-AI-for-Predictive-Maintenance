@@ -169,7 +169,7 @@ def _download_http(session: requests.Session, remote: RemoteFile, part: Path) ->
 
 
 def _download_gdrive(remote: RemoteFile, part: Path) -> None:
-    import gdown  # optional dependency, only for Google Drive sources
+    import gdown  # imported lazily: only Google Drive sources (XJTU-SY) need it
 
     file_id = remote.url.removeprefix("gdrive:")
     result = gdown.download(id=file_id, output=str(part), quiet=False, resume=True)
@@ -497,7 +497,8 @@ def _cmd_extract(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="pdmfm-fetch", description=__doc__.splitlines()[0])
+    summary = (__doc__ or "pdmfm-fetch").splitlines()[0]  # docstrings are gone under -OO
+    parser = argparse.ArgumentParser(prog="pdmfm-fetch", description=summary)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="show the registered datasets").set_defaults(func=_cmd_list)
     for command, func in (("plan", _cmd_plan), ("get", _cmd_get)):

@@ -37,10 +37,12 @@ _CUT = re.compile(r"(\d+)$")
 
 def read_wear(path: Path) -> dict[int, float]:
     """Cut number -> flank wear in µm (maximum over the flutes)."""
-    rows = np.genfromtxt(path, delimiter=",", names=True)
+    rows = np.atleast_1d(np.genfromtxt(path, delimiter=",", names=True))
     names = rows.dtype.names
-    flutes = [n for n in names if n.lower().startswith("flute")]
-    return {int(r[names[0]]): float(max(r[f] for f in flutes)) for r in np.atleast_1d(rows)}
+    flutes = [n for n in names or () if n.lower().startswith("flute")]
+    if not names or not flutes:
+        raise ValueError(f"{path}: expected a header with a cut column and flute_* columns")
+    return {int(r[names[0]]): float(max(r[f] for f in flutes)) for r in rows}
 
 
 class PHM2010:
@@ -55,9 +57,12 @@ class PHM2010:
             cutter = cutter_dir.name
             wear_files = list(cutter_dir.rglob("*wear*.csv"))
             wear = read_wear(wear_files[0]) if wear_files else {}
-            cuts = [p for p in cutter_dir.rglob("*.csv") if "wear" not in p.name.lower()]
-            for path in sorted(cuts, key=lambda p: int(_CUT.search(p.stem).group(1))):
-                cut = int(_CUT.search(path.stem).group(1))
+            cuts = []
+            for path in cutter_dir.rglob("*.csv"):
+                match = _CUT.search(path.stem)
+                if match and "wear" not in path.name.lower():  # other CSVs are not cuts
+                    cuts.append((int(match.group(1)), path))
+            for cut, path in sorted(cuts):
                 infos.append(
                     RecordingInfo(
                         dataset=self.name,

@@ -77,7 +77,13 @@ def band_limit(
     stop = min(cutoff_hz + transition_hz, nyquist)
     numtaps, beta = sps.kaiserord(attenuation_db, (stop - cutoff_hz) / nyquist)
     numtaps |= 1  # odd length: symmetric taps centred on a sample, so "same" has no delay
-    taps = sps.firwin(numtaps, 0.5 * (cutoff_hz + stop), window=("kaiser", beta), fs=rate_hz)
+    taps = sps.firwin(
+        numtaps,
+        0.5 * (cutoff_hz + stop),
+        # scipy accepts (name, parameter) windows; its type stubs list only str
+        window=("kaiser", beta),  # pyright: ignore[reportArgumentType]
+        fs=rate_hz,
+    )
     return sps.oaconvolve(x, taps, mode="same").astype(np.float32)
 
 
