@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -337,8 +338,8 @@ def _rar_command(archive: Path, destination: Path) -> list[str]:
         if shutil.which(tool):
             return [tool, "x", "-y", f"-o{destination}", str(archive)]
     unrar = shutil.which("unrar") or next((str(p) for p in WINRAR_UNRAR if p.exists()), None)
-    if unrar:
-        return [unrar, "x", "-o+", "-y", "-idq", str(archive), str(destination) + "\\"]
+    if unrar:  # a trailing separator tells unrar the destination is a folder
+        return [unrar, "x", "-o+", "-y", "-idq", str(archive), str(destination) + os.sep]
     tar = Path(r"C:\Windows\System32\tar.exe")
     return [str(tar) if tar.exists() else "tar", "-xf", str(archive), "-C", str(destination)]
 

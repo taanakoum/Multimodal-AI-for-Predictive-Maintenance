@@ -1,0 +1,40 @@
+# CWRU bearing data. Context: machine, sensors, speed, load; never the state.
+# Descriptions: the fault and its size; never speed or load (plan, "Rules for the text inputs").
+dataset: cwru
+label_space: cwru10
+context: >-
+  Electric motor test rig with an SKF 6205 deep-groove ball bearing at the drive end, turning
+  at about {rpm:.0f} rpm under a {load_hp} hp motor load. Accelerometers on the drive-end and
+  fan-end bearing housings.
+severity_text:
+  0.007 in: 0.18 mm (0.007 in)
+  0.014 in: 0.36 mm (0.014 in)
+  0.021 in: 0.53 mm (0.021 in)
+templates:
+  normal:
+    - A healthy deep-groove ball bearing with no defect.
+    - A ball bearing in good condition, without damage on its races or balls.
+    - An undamaged rolling-element bearing.
+  inner_race:
+    - An inner-race defect of {severity} on a deep-groove ball bearing.
+    - A deep-groove ball bearing whose inner ring carries a {severity} defect.
+    - Localized damage of {severity} on the rotating inner race of a ball bearing.
+  outer_race:
+    - An outer-race defect of {severity} on a deep-groove ball bearing.
+    - A deep-groove ball bearing whose outer ring carries a {severity} defect.
+    - Localized damage of {severity} on the stationary outer race of a ball bearing.
+  ball:
+    - A rolling-element defect of {severity} on one ball of a deep-groove ball bearing.
+    - A deep-groove ball bearing with a {severity} defect on a ball.
+    - Localized damage of {severity} on a rolling element of a ball bearing.
+classes:
+  - normal
+  - inner_race/0.007 in
+  - inner_race/0.014 in
+  - inner_race/0.021 in
+  - ball/0.007 in
+  - ball/0.014 in
+  - ball/0.021 in
+  - outer_race/0.007 in
+  - outer_race/0.014 in
+  - outer_race/0.021 in

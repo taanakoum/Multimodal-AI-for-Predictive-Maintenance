@@ -25,6 +25,7 @@ dependencies = [
     "psutil>=5.9",
     "pandas>=2.0",
     "gdown>=5.1",  # XJTU-SY download (Google Drive)
+    "joblib>=1.3",  # parallel Gate-1 fits (also a scikit-learn dependency)
 ]
 
 [project.optional-dependencies]
@@ -49,12 +50,16 @@ pdmfm-fetch = "pdmfm.fetch:main"
 [tool.setuptools.packages.find]
 include = ["pdmfm*"]
 
+[tool.setuptools.package-data]
+pdmfm = ["texts/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "network: needs internet access (skipped unless PDMFM_NETWORK_TESTS=1)",
     "data(name, extracted=False): reads a real dataset; skipped when it is not downloaded",
+    "weights(repo): needs a pretrained checkpoint in the Hugging Face cache; skipped otherwise",
     "slow: takes more than a few seconds",
 ]
 

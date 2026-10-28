@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -275,3 +276,18 @@ def test_verify_cli_exits_non_zero_when_incomplete(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         fetch.main(["verify", "phm2010"])
     assert exit_info.value.code == 1
+
+
+def test_rar_tool_choice_and_destination_separator(monkeypatch, tmp_path):
+    archive, destination = tmp_path / "K001.rar", tmp_path / "out"
+    tools = {}
+    monkeypatch.setattr(fetch.shutil, "which", lambda name: tools.get(name))
+    monkeypatch.setattr(fetch, "WINRAR_UNRAR", ())
+    tools["7z"] = "/usr/bin/7z"
+    assert fetch._rar_command(archive, destination)[:3] == ["7z", "x", "-y"]
+    tools.clear()
+    tools["unrar"] = "/usr/bin/unrar"
+    command = fetch._rar_command(archive, destination)
+    assert command[0] == "/usr/bin/unrar" and command[-1] == str(destination) + os.sep
+    tools.clear()
+    assert "-xf" in fetch._rar_command(archive, destination)  # the system tar, last resort

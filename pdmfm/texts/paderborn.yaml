@@ -1,0 +1,26 @@
+# Paderborn KAt bearings. Three classes; the combined-damage bearing (KB27) is outside the
+# label space and is left out of classification tasks (pdmfm.protocols).
+dataset: paderborn
+label_space: paderborn3
+context: >-
+  Electromechanical drive test rig with a 6203 deep-groove ball bearing in a test module,
+  turning at about {rpm:.0f} rpm with a load torque of {torque_nm} Nm and a radial force of
+  {radial_n:.0f} N. Sensors: a bearing-housing accelerometer, two motor-phase current sensors
+  and a thermocouple.
+templates:
+  healthy:
+    - A healthy deep-groove ball bearing with no defect.
+    - A ball bearing in good condition, without damage on its races or balls.
+    - An undamaged rolling-element bearing.
+  outer_race:
+    - A defect on the outer race of a deep-groove ball bearing.
+    - A deep-groove ball bearing whose outer ring is damaged.
+    - Localized damage on the stationary outer race of a ball bearing.
+  inner_race:
+    - A defect on the inner race of a deep-groove ball bearing.
+    - A deep-groove ball bearing whose inner ring is damaged.
+    - Localized damage on the rotating inner race of a ball bearing.
+classes:
+  - healthy
+  - outer_race
+  - inner_race

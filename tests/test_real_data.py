@@ -209,3 +209,57 @@ def test_phm2010_acceptance_columns_and_spindle_speed():
     assert harmonic < 0.02, (
         f"strongest force line {line:.1f} Hz; expected a multiple of {tooth / 3:.1f} Hz"
     )
+
+
+# ----------------------------------------------------------------------------- window stores
+# Built from the real downloads with `python -m pdmfm.windows build ...`; skipped otherwise.
+
+
+def _store(dataset):
+    from pdmfm.windows import WindowStore
+
+    try:
+        return WindowStore.open(dataset)
+    except (FileNotFoundError, ValueError):
+        pytest.skip(f"no {dataset} window store (python -m pdmfm.windows build {dataset})")
+
+
+def test_window_counts_match_the_eda():
+    expected = {"cwru": 356, "kaist": 4378, "xjtu_sy": 9216, "nonastreda": 4241}
+    for dataset, count in expected.items():
+        store = _store(dataset)
+        assert len(store) == count, dataset
+
+
+def test_xjtu_rul_labels_follow_the_recommended_fpt_rule():
+    store = _store("xjtu_sy")
+    first = store.manifest.groupby("unit").first()
+    fraction = first["fpt"] / first["meta_lifetime_min"]
+    # docs/EDA_REPORT.md section 7.2, rule "10 %, 3 sigma, 10": no alarm in the first 5 % of
+    # life, the long Bearing3_1 run late in life, and Bearing1_4 (cage) via kurtosis.
+    assert (fraction.dropna() > 0.05).all()
+    assert abs(fraction["Bearing3_1"] - 0.924) < 0.01
+    assert first.loc["Bearing1_4", "fpt_source"] == "kurtosis"
+
+
+def test_kaist_and_cwru_contexts_depend_on_the_load_only():
+    for dataset, load in (("cwru", "load_hp"), ("kaist", "load_nm")):
+        manifest = _store(dataset).manifest
+        assert manifest.groupby(load)["context"].nunique().eq(1).all(), dataset
+
+
+def test_nonastreda_windows_see_only_previous_pass_photos():
+    from pathlib import PurePosixPath
+
+    manifest = _store("nonastreda").manifest
+    for kind in ("tool", "chip", "workpiece"):
+        has_photo = manifest[f"image_{kind}"] != ""
+        assert (manifest.loc[has_photo, f"age_{kind}"] > 0).all()
+        stems = manifest[f"image_{kind}"].map(lambda p: PurePosixPath(p).stem if p else "")
+        assert not (stems == manifest["recording_id"]).any()  # never the pass's own photo
+    start = manifest.groupby("unit")["meta_t_start"].transform("min")
+    first = manifest["meta_t_start"] == start
+    assert (manifest.loc[first, "image_tool"] == "").all()  # a tool's first pass has none
+    # Every window of a later pass has the previous pass's photos, its first window included
+    # (the photo pause between passes; pdmfm.datasets.nonastreda.PASS_GAP_S).
+    assert (manifest.loc[~first, "image_tool"] != "").all()

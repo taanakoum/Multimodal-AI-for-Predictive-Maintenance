@@ -239,14 +239,23 @@ def test_nonastreda_reader_clock_photos_and_targets(tmp_path, monkeypatch):
     reader = get_reader("nonastreda", root=tmp_path)
     infos = reader.index()
     assert [i.recording_id for i in infos] == ["T1R1B1", "T1R1B2", "T2R1B1"]  # run/block order
+    from pdmfm.datasets.nonastreda import PASS_GAP_S
+    from pdmfm.schema import as_of_join
+
     first, second, other = infos
     assert (first.meta["t_start"], first.meta["t_end"]) == (0.0, 1.0)
-    assert (second.meta["t_start"], second.meta["t_end"]) == (1.0, 3.0)
+    gap = PASS_GAP_S  # passes are separated by the photo pause
+    assert (second.meta["t_start"], second.meta["t_end"]) == (1.0 + gap, 3.0 + gap)
     assert other.meta["t_start"] == 0.0  # each tool has its own clock
     assert other.label == "dulled" and other.meta["flank_wear"] == 120.0
     rec = reader.load(second)
     assert {i.kind for i in rec.images} == {"tool", "chip", "workpiece"}
-    assert all(i.captured_at == 3.0 for i in rec.images)  # taken after the pass
+    assert all(i.captured_at == 3.0 + 1.5 * gap for i in rec.images)  # taken after the pass
+    # The first pass's photos fall strictly between the passes: the second pass's very
+    # first window gets them, and no window of the first pass does.
+    photos = reader.load(first).images
+    assert len(as_of_join(photos, second.meta["t_start"])) == 3
+    assert as_of_join(photos, first.meta["t_end"]) == ()
     assert rec.targets == {"wear_um": 40.0} and rec.channels["fx"].rate_hz == 1000.0
     assert "run" not in rec.info.condition  # the run-number shortcut stays in meta
 

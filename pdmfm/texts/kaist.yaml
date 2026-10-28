@@ -1,0 +1,45 @@
+# KAIST rotating machine (target). Context never names the state; descriptions never name
+# speed or load.
+dataset: kaist
+label_space: kaist15
+context: >-
+  Rotating machine test rig with NSK 6205 deep-groove ball bearings in two housings, driven by
+  a three-phase motor at about {rpm:.0f} rpm under a {load_nm} Nm torque load. Sensors: four
+  housing accelerometers, motor-phase current sensors and two thermocouples.
+templates:
+  normal:
+    - A healthy rotating machine with no defect.
+    - A machine in good condition, with sound bearings, aligned shafts and a balanced rotor.
+    - An undamaged rotor and bearing assembly.
+  inner_race:
+    - An inner-race defect of {severity} on a deep-groove ball bearing.
+    - A deep-groove ball bearing whose inner ring carries a {severity} defect.
+    - Localized damage of {severity} on the rotating inner race of a ball bearing.
+  outer_race:
+    - An outer-race defect of {severity} on a deep-groove ball bearing.
+    - A deep-groove ball bearing whose outer ring carries a {severity} defect.
+    - Localized damage of {severity} on the stationary outer race of a ball bearing.
+  misalignment:
+    - A shaft misalignment of {severity} between the motor and the rotor.
+    - Misaligned shafts, offset by {severity} at the coupling.
+    - A coupling misalignment of {severity}.
+  unbalance:
+    - A rotor unbalance from an added mass of {severity}.
+    - An unbalanced rotor carrying an extra {severity} mass.
+    - Mass unbalance of {severity} on the rotating disc.
+classes:
+  - normal
+  - inner_race/0.3 mm
+  - inner_race/1.0 mm
+  - inner_race/3.0 mm
+  - outer_race/0.3 mm
+  - outer_race/1.0 mm
+  - outer_race/3.0 mm
+  - misalignment/0.1 mm
+  - misalignment/0.3 mm
+  - misalignment/0.5 mm
+  - unbalance/583 mg
+  - unbalance/1169 mg
+  - unbalance/1751 mg
+  - unbalance/2239 mg
+  - unbalance/3318 mg

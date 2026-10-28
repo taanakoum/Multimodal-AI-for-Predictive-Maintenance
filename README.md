@@ -58,9 +58,41 @@ pre-commit install                        # same lint and format checks before e
 
 GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 3.12, then an advisory type check. A weekly workflow checks that the data sources still serve the files we used. See [`docs/CI.md`](docs/CI.md).
 
+## Pipeline (stages 1-3 of the plan)
+
+```powershell
+python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda      # 1: window stores (model input, labels, contexts)
+python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda --encoder mantis --arms T F E
+python -m pdmfm.features images                                  # 2: DINOv2 photo tokens
+python -m pdmfm.features texts                                   #    Qwen3 contexts and class prototypes
+python -m pdmfm.patchtst --fold 1 --device cuda                  #    own PatchTST, per outer fold (Ruche)
+python -m pdmfm.probe --run-id gate1 --candidates mantis:T mantis:T+E moment:T ...   # 3: Gate 1
+python -m pdmfm.features status                                  # what is cached
+```
+
+- **Stage 1.** A window store per dataset holds the band-limited model input of every channel,
+  level descriptors, slow-channel summaries, the measured shaft speed, labels and the context
+  sentence. Nonastreda windows also get the previous pass's photos.
+- **Stage 2.** Feature caches are keyed by the store, the encoder checkpoint and the arm, so
+  they are never mixed, and they resume after an interruption.
+- **Splits.** All splits are by physical unit (`pdmfm.protocols`).
+- **Stage 3.** Gate 1 ranks encoder-and-arm candidates over its four tasks on
+  inner-validation units only.
+- **Ruche.** MOMENT, AST and PatchTST at full scale run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
+
 ## Heavy jobs and Ruche
 
-Scripts that load the CPU call `pdmfm.resources.claim_resources` first. `python -m pdmfm.resources` shows idle CPUs, free RAM and busy processes. On Ruche, `scripts/ruche/setup_env.sh` builds the environment once and `source scripts/env/ruche.sh` loads it in every session. `scripts/ruche/net_check.sbatch` tests the compute nodes' internet access, and `prefetch_weights.sh` downloads the model weights on the login node.
+Scripts that load the CPU call `pdmfm.resources.claim_resources` first, which is aware of SLURM
+allocations. `python -m pdmfm.resources` shows idle CPUs, free RAM and busy processes. On Ruche,
+`slurm/` holds:
+
+- the environment (`env.sh`);
+- the job wrappers (`job.sbatch` for GPU, `cpu.sbatch`, `checks.sbatch`);
+- `chain.sh` for runs beyond 24 h;
+- `status.sh`;
+- the login-node downloads.
+
+The runbook has the exact commands.
 
 ## Layout
 
@@ -71,14 +103,22 @@ pdmfm/            package
   fetch.py        resumable, hash-checked downloader; extract; verify
   schema.py       Sample, ChannelWindow, ImageItem; as-of join of images to windows
   preprocess.py   resampling, 5 kHz band limit, windows, T/F/E arms, descriptors, FPT, RUL
-  resources.py    CPU/RAM guard and thread caps
+  resources.py    CPU/RAM guard and thread caps (SLURM-aware)
   datasets/       one reader per dataset
-tests/            pytest suite (synthetic data; real-data, acceptance and network tests are marked)
+  texts/          context templates and fault descriptions per dataset (YAML)
+  protocols.py    unit-level splits: outer folds, Gate 1, targets, few-shot draws, pretraining masks
+  windows.py      stage 1: window stores
+  arms.py         encoder inputs T, F, E, S from a window store
+  encoders.py     frozen encoders (stats, Mantis, MOMENT, PatchTST, AST, DINOv2, Qwen3)
+  features.py     stage 2: resumable feature caches; photo and text caches
+  patchtst.py     own PatchTST, masked-patch pretraining per outer fold
+  probe.py        stage 3: Gate 1
+tests/            pytest suite (synthetic data; real-data, checkpoint, acceptance and network tests are marked)
 scripts/eda/      exploratory data analysis
 scripts/ci/       local CI reproduction, data-source check
-scripts/ruche/    Ruche environment, network check, Paderborn fetch, weight prefetch
-scripts/env/      environment scripts for the dev machine and Ruche
-docs/             plan copy, EDA report and figures, CI, your action list
+scripts/env/      environment scripts for the dev machine
+slurm/            Ruche: environment, job wrappers, chains, status, network check, downloads
+docs/             plan copy, EDA report, Ruche runbook, CI, your action list
 ```
 
 ## Licence

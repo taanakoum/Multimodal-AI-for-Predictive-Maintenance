@@ -1,0 +1,9 @@
+# XJTU-SY run-to-failure bearings: a regression target (RUL), so no class descriptions.
+dataset: xjtu_sy
+label_space: null
+context: >-
+  Accelerated life test rig with an LDK UER204 rolling-element bearing turning at about
+  {rpm:.0f} rpm under a radial force of {radial_kn:.0f} kN. Accelerometers on the bearing
+  housing, horizontal and vertical.
+templates: {}
+classes: []

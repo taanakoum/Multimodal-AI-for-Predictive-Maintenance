@@ -25,6 +25,7 @@ $env:PDMFM_NETWORK_TESTS = "1"; pytest -m network   # publishers still serve the
 | `data(name, extracted=…)` | Reads the real dataset under `PDMFM_DATA_ROOT` | Only when that dataset is on disk; skipped with a reason otherwise |
 | `network` | Contacts the publishers (sizes, hashes, metadata) | Only with `PDMFM_NETWORK_TESTS=1` (weekly workflow) |
 | `slow` | Over about 10 s (loads all of KAIST, Nonastreda) | Always where its data exists; deselect with `-m "not slow"` |
+| `weights(repo)` | Loads a pretrained checkpoint (Mantis, MOMENT, AST, DINOv2, Qwen3) | Only when it is in the Hugging Face cache; never in CI. On Ruche, step 0 runs them offline |
 
 | File | Covers |
 |---|---|
@@ -35,7 +36,15 @@ $env:PDMFM_NETWORK_TESTS = "1"; pytest -m network   # publishers still serve the
 | `test_resources.py` | CPU/RAM guard (busy refusal, waiting, SLURM cores, thread caps) |
 | `test_readers.py` | Every reader on synthetic MAT/TDMS/CSV/BMP files in the real layout (Nonastreda through a stand-in `omnifuser.data`) |
 | `test_eda.py` | EDA helpers; CWRU and Najafi analyses end to end on synthetic files |
-| `test_real_data.py` | Facts verified on the real downloads, kept as regression tests; acceptance tests for Paderborn and PHM 2010 (`docs/USER_ACTIONS.md`) |
+| `test_texts.py` | Context and fault-description YAMLs: every reader label has a class; contexts never name the state; descriptions never name speed or load |
+| `test_protocols.py` | Unit-disjoint outer folds; every unit tested once; Paderborn stratification; pretraining never sees test, validation or target units; few-shot and subsample draws |
+| `test_windows.py` | Window stores on synthetic readers: exact model input, labels, load-only contexts, measured speed, XJTU-SY RUL labels, previous-pass photos only, slow channels, atomic rebuilds; the T/F/E/S arms |
+| `test_encoders.py` | Handcrafted encoder; registry; AST position resizing and PatchTST encoding on tiny models; the real checkpoints (`weights`) |
+| `test_features.py` | Cached features equal online encoding; resume after a crash; subsamples; signature changes give new folders; photo and text caches |
+| `test_probe.py` | Gate 1 on synthetic stores: scores per task, validation units only, shared rows, per-fold models, inapplicable arms ranked last, tie to the cheaper encoder, parallel = serial |
+| `test_patchtst.py` | Pretraining corpus per fold; resume after an interruption; refusal of other settings; the checkpoint loads as an encoder |
+| `test_slurm.py` | The Ruche scripts parse; chains link each part to the previous one; jobs refuse to run outside SLURM; status runs anywhere (Linux only) |
+| `test_real_data.py` | Facts verified on the real downloads and the window stores built from them, kept as regression tests; acceptance tests for Paderborn and PHM 2010 (`docs/USER_ACTIONS.md`) |
 | `test_network.py` | Publisher sizes and hashes (Najafi, KAIST, MBHM, CWRU, NASA) |
 
 ## 2. pre-commit

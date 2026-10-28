@@ -1,0 +1,9 @@
+# PHM 2010 milling (target; wear regression), so no class descriptions.
+dataset: phm2010
+label_space: null
+context: >-
+  High-speed CNC milling of stainless steel (HRC52) with a 6 mm three-flute ball-nose
+  tungsten-carbide cutter at about {rpm:.0f} rpm. Cutting forces and vibration in three axes on
+  the table, and acoustic emission.
+templates: {}
+classes: []

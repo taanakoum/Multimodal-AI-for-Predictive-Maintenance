@@ -29,7 +29,6 @@ dist/
 /runs/
 /outputs/
 /logs/
-net_check-*.out
 
 # Test and CI outputs (docs/CI.md)
 .coverage

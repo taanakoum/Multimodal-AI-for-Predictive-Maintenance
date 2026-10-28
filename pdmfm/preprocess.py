@@ -11,7 +11,8 @@
   cannot see (absolute level, DC trend); :func:`relative_to_baseline` expresses them against
   the unit's healthy reference.
 * :func:`dominant_frequency`: tachless shaft-speed or line-frequency estimate.
-* :func:`defect_frequencies`, :func:`first_prediction_time`, :func:`normalized_rul`.
+* :func:`defect_frequencies`, :func:`first_prediction_time`, :func:`label_fpt`,
+  :func:`normalized_rul`.
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ import numpy as np
 from scipy import signal as sps
 from scipy import stats
 
+# Part of every window-store and feature-cache signature: bump it whenever a function here
+# changes its output, so stale caches are rebuilt instead of mixed with new ones.
+PREPROCESS_VERSION = 2
 MODEL_RATE_HZ = 12_000.0
 # Every source is low-passed here: recorders roll off differently below their Nyquist
 # frequency, so content above ~5.25 kHz identifies the source (and, on CWRU, the class).
@@ -285,6 +289,25 @@ def first_prediction_time(
         if above[start : start + consecutive].all():
             return start
     return None
+
+
+def label_fpt(
+    rms: np.ndarray, kurtosis: np.ndarray | None = None, fraction: float = 0.1
+) -> tuple[int | None, str]:
+    """FPT for offline RUL labels (docs/EDA_REPORT.md, section 7.2): the healthy reference is
+    the first ``fraction`` of life (at least 10 snapshots), 3σ, 10 consecutive exceedances.
+    Abrupt failures that RMS misses (XJTU-SY Bearing1_4) fall back to the same rule on
+    kurtosis. Returns (index or None, "rms" | "kurtosis" | "none"). Uses the whole
+    lifetime, so it labels data; it is never a model input."""
+    count = max(10, int(fraction * len(rms)))
+    fpt = first_prediction_time(rms, count, 3.0, 10)
+    if fpt is not None:
+        return fpt, "rms"
+    if kurtosis is not None:
+        fpt = first_prediction_time(kurtosis, count, 3.0, 10)
+        if fpt is not None:
+            return fpt, "kurtosis"
+    return None, "none"
 
 
 def normalized_rul(n_snapshots: int, fpt: int | None) -> np.ndarray:

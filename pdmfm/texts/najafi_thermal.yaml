@@ -1,0 +1,27 @@
+# Najafi thermal images of an induction motor (image pathway and label space only).
+dataset: najafi_thermal
+label_space: najafi4
+context: >-
+  Thermal camera image of a three-phase induction motor on a test bench, in false colour.
+templates:
+  healthy:
+    - A healthy induction motor with an even temperature distribution.
+    - An induction motor operating as intended, without electrical or mechanical faults.
+    - A motor in good condition with no hot spots.
+  stator_short_circuit:
+    - An induction motor with a short circuit in its stator windings.
+    - A stator inter-turn short circuit heating part of the motor windings.
+    - A motor whose stator coils are partly short-circuited.
+  cooling_fan_failure:
+    - An induction motor whose cooling fan has failed.
+    - A motor running without working fan cooling.
+    - A broken cooling fan on an induction motor.
+  stuck_rotor:
+    - An induction motor with a locked rotor.
+    - A motor whose rotor is blocked and cannot turn.
+    - A stalled induction motor with its rotor stuck.
+classes:
+  - healthy
+  - stator_short_circuit
+  - cooling_fan_failure
+  - stuck_rotor

@@ -3,11 +3,12 @@
 ``omnifuser.data.load_nonastreda(pool=1)`` gives the 378 deduplicated, edge-trimmed passes
 at 1 kHz (the dataset's own rate). This reader adds what OmniFuser's ``Record`` lacks:
 flank wear, gaps and overhang from ``labels_reg.csv``; the chip and workpiece photos; and a
-clock per tool. Passes are laid end to end in (run, block) order, and every photo of a pass
-is stamped with the pass's end time, because the photos are taken after the pass. The as-of
-join (:func:`pdmfm.schema.as_of_join`) then attaches only the previous pass's photos to a
-window. Run and block numbers stay in ``meta`` and are never model inputs (the run number
-alone predicts the class with 71 % accuracy, OmniFuser finding F2).
+clock per tool. Passes follow each other in (run, block) order with a pause of
+``PASS_GAP_S`` between them, in which the photos of the finished pass are taken (stamped in
+the middle of the pause). The as-of join (:func:`pdmfm.schema.as_of_join`) then attaches
+the previous pass's photos to every window of a pass, including its first, and never a
+pass's own photos. Run and block numbers stay in ``meta`` and are never model inputs (the
+run number alone predicts the class with 71 % accuracy, OmniFuser finding F2).
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from pdmfm.paths import raw_dir
 from pdmfm.schema import ImageItem
 
 RATE_HZ = 1000.0
+# Nominal pause between passes (not recorded in the data). Its length only sets the photo
+# ages; what matters is that the photos fall strictly between two passes.
+PASS_GAP_S = 60.0
 CLASS_NAMES = ("sharp", "used", "dulled")  # flank wear < 71 µm, < 110 µm, >= 110 µm
 PHOTO_FOLDERS = {"tool": ("tool", ".jpg"), "chip": ("chip", ".jpg"), "workpiece": ("work", ".png")}
 FORCE_AXES = (("fx", "x"), ("fy", "y"), ("fz", "z"))
@@ -60,7 +64,7 @@ class Nonastreda:
         for record in sorted(records.values(), key=lambda r: (int(r.tool[1:]), r.run, r.block)):
             start = clocks.get(record.tool, 0.0)
             seconds = len(record.force) / RATE_HZ
-            clocks[record.tool] = start + seconds
+            clocks[record.tool] = start + seconds + PASS_GAP_S
             infos.append(
                 RecordingInfo(
                     dataset=self.name,
@@ -84,12 +88,13 @@ class Nonastreda:
         return infos
 
     def photos(self, info: RecordingInfo) -> tuple[ImageItem, ...]:
-        """This pass's photos, stamped with the pass's end time (taken after the pass)."""
+        """This pass's photos, stamped in the pause after the pass (taken after it)."""
+        taken = info.meta["t_end"] + PASS_GAP_S / 2
         items = []
         for kind, (folder, suffix) in PHOTO_FOLDERS.items():
             path = self.root / folder / f"{info.recording_id}{suffix}"
             if path.exists():
-                items.append(ImageItem(kind=kind, path=str(path), captured_at=info.meta["t_end"]))
+                items.append(ImageItem(kind=kind, path=str(path), captured_at=taken))
         return tuple(items)
 
     def load(self, info: RecordingInfo) -> Recording:

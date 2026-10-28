@@ -2,6 +2,26 @@
 
 Oct 23, 2026 · @Mohammad Taan Al Akoum
 
+> **Amendments since this copy** (reasons in `PROJECT_LOG.md`, decision log; evidence in
+> `docs/EDA_REPORT.md`):
+>
+> - Every sensor channel is band-limited to a common 5 kHz after resampling, and the E arm's
+>   band is 1-5 kHz (was 1-5.5 kHz). Recorder roll-offs above 5 kHz identify the source and,
+>   on CWRU, the class.
+> - The E arm's shaft speed is measured from the vibration of each recording (nominal for
+>   XJTU-SY's short snapshots).
+> - XJTU-SY RUL labels use an FPT whose healthy reference is the first 10 % of life (at least
+>   10 snapshots), with 3σ and 10 consecutive exceedances, and a kurtosis fallback. The
+>   3-snapshot rule raised false alarms at 0.6 % of life.
+> - Window shards are float32, not float16: float16 rounding is white noise up to Nyquist and
+>   would undo the band limit.
+> - The own PatchTST is pretrained once per outer fold, so Gate 1 never scores a model on
+>   units it was pretrained on.
+> - Gate 1 drops arms a dataset lacks (E without bearings, S below 12 kHz). A candidate left
+>   with none takes the worst rank on that task.
+> - Nonastreda passes are separated by a photo pause on each tool's clock, so every window of
+>   a pass, its first included, receives the previous pass's photos.
+
 ## Summary
 
 The plan builds a multimodal PdM model from frozen pretrained encoders: a sensor foundation model, DINOv2 for images and Qwen3-Embedding for text. Their outputs are cached as tokens and fused by a small transformer picked through a fusion search. Evidential heads, whose classes are text descriptions of faults, give a prediction plus an uncertainty. The fusion stage is pretrained with masked-token modeling, cross-modal contrastive learning and text anchoring on four source datasets. It is then adapted to three held-out datasets with few-shot linear probes and LoRA. Schedule: 13 weeks plus 1 buffer week, from 2026-10-26 to 2027-01-31.

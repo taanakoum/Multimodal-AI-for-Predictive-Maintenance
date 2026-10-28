@@ -2,17 +2,16 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-10-26)
+## Status at a glance (updated 2026-10-29)
 
 | Area | State |
 | --- | --- |
-| Phase | Week 1 done early; week-2 data layer (schema, readers, preprocessing) implemented and tested |
-| Repository, environment, tests | 122 tests, of which 113 pass with the local data (9 skip: 5 network, 4 acceptance tests awaiting Paderborn and PHM 2010); lint and format clean; pre-commit hooks pass |
-| CI | GitHub Actions workflows written and reproduced locally on fresh Python 3.11 and 3.12 environments (104 passed, 18 data/network skips, 91 % coverage). Runs on GitHub after your next push (repository and remote already exist) |
-| Datasets on `D:\Project14\data` | Done: CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata. **Blocked:** Paderborn, PHM 2010 (infrastructure and acceptance tests ready) |
-| EDA | `docs/EDA_REPORT.md`: 13 findings, three of them new preprocessing rules (5 kHz common band, measured shaft speed, FPT rule for RUL labels) |
-| Encoders | All 7 load and run on CPU (Mantis, MOMENT-base, DINOv2-S, Qwen3-Embedding, AST, TimesFM 3.0, TimesFM 2.5) |
-| Needs you | `docs/USER_ACTIONS.md`: PHM 2010, Paderborn, Ruche network check, GitHub repository and CI, pre-commit, commits, 3 decisions |
+| Phase | Stages 1-3 of the plan (weeks 2-4) implemented and tested: texts, unit-level splits, window stores, encoder bank, feature cache, own PatchTST, Gate-1 probe. Local CPU part run; the GPU part is ready for Ruche (`docs/RUCHE_RUNBOOK.md`) |
+| Tests | See "Week 2-4" below for the counts; lint, format and pre-commit clean |
+| CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
+| Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (manual download) |
+| EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push; run the Ruche runbook; PHM 2010; 3 decisions |
 
 ## Week 1 — setup, downloads and verification
 
@@ -239,3 +238,40 @@ Week 2 (Nov 2-8, plan):
 | 2026-10-26 | Nonastreda tables always include the persistence baseline | Persistence (78.8 %) beats the published accuracy |
 | 2026-10-26 | Ruff pinned to 0.17.2 in pyproject, pre-commit and CI | Formatting differs between versions |
 | 2026-10-26 | Nothing committed | Your instruction: you commit yourself |
+
+## Weeks 2-4 (2026-10-28/29): stages 1-3 of the pipeline
+
+### What was implemented
+
+| File | Purpose |
+| --- | --- |
+| `pdmfm/texts/*.yaml`, `pdmfm/texts/__init__.py` | Context templates (machine, sensors, speed, load; never the state) and 3 paraphrases per class (never speed or load) for 7 datasets; class keys `label` or `label/severity` |
+| `pdmfm/protocols.py` | The plan's splits as row masks: 5 outer folds (Nonastreda, XJTU-SY, Paderborn's 15 source bearings in stratified triples), Nonastreda leave-one-tool-out, CWRU Gate-1 split, KAIST/Paderborn/PHM 2010 targets, few-shot draws, unit-stratified subsamples, pretraining masks per fold |
+| `pdmfm/windows.py` | Stage 1: a window store per dataset (band-limited model input in float32, levels, slow summaries, measured shaft speed, labels, context, previous-pass photos, XJTU-SY RUL), written atomically, refused when built by other code |
+| `pdmfm/arms.py` | Encoder inputs T (512-sample segments), F (log spectrum), E (envelope orders), S (waveform) |
+| `pdmfm/encoders.py` | One interface for the encoder bank: handcrafted reference, Mantis, MOMENT, own PatchTST, AST (positions resized to 100 frames), DINOv2 photo tokens, Qwen3 text |
+| `pdmfm/features.py` | Stage 2: resumable feature caches keyed by store, checkpoint and arm; photo and text caches |
+| `pdmfm/patchtst.py` | Own PatchTST masked-patch pretraining per outer fold; resumable |
+| `pdmfm/probe.py` | Stage 3: Gate 1 on the plan's four tasks, inner-validation units only, shared rows, per-fold models, parallel fits |
+| `pdmfm/utils.py` | Stable hashes and atomic writes |
+| `slurm/` | Ruche: environment, GPU/CPU job wrappers, step-0 checks, chains, status, network check, login-node downloads (replaces `scripts/ruche/` and `scripts/env/ruche.sh`) |
+| `docs/RUCHE_RUNBOOK.md` | Exact commands for the Ruche part, after the OmniFuser runbook |
+| Tests | `test_texts`, `test_protocols`, `test_windows`, `test_encoders`, `test_features`, `test_probe`, `test_patchtst`, `test_slurm`; new real-data and regression tests; `tests/synthetic.py` (readers in each dataset's layout) |
+
+### Problems found and fixed in this phase
+
+| Problem | How it was found | Fix |
+| --- | --- | --- |
+| The first window of every Nonastreda pass never received the previous pass's photo: passes were laid end to end and photos stamped exactly at the next pass's start | Window-store test | A photo pause between passes on each tool's clock (`PASS_GAP_S`); on the real store all 4,134 later-pass windows now carry all three photos, the 107 first-pass windows none |
+| The handcrafted encoder's band means diluted narrow spectral lines (a tone moved its band mean by 0.07) | Probe test on synthetic tones | Band maxima added (36 dimensions) |
+| `unrar` destination ended with a backslash, wrong on Linux (Ruche) | Writing the runbook | `os.sep`; tested |
+| DINOv2 wrapper needed a processor config absent from an offline cache; Qwen3 loaded in bfloat16 on CPU (slow, norms off by 2e-3) | Real-checkpoint tests offline | ImageNet constants; float32 |
+| Manifest columns `meta_*` read back as text (minute 10 sorted before minute 2) | Window-store tests | Numeric parsing for all non-text columns |
+| Gate 1 skipped a whole task when a candidate lacked an arm (E on Nonastreda), and could name a reference as winner | Planning the runbook commands; reading the code | Arms a dataset lacks are dropped; a candidate with none takes the worst rank; winner chosen among candidates only |
+| Review (code-review skill, high): stale stores never refused; `--limit` smoke builds replaced the full store; a missing reference skipped a task; several caches of one encoder blocked the probe; an XJTU-SY snapshot shorter than a window shifted RUL labels; an empty dataset crashed the PatchTST corpus sampler; dataset names hard-coded in the builder; duplicated helpers; two extra corpus copies | Review of the uncommitted diff | All fixed and tested. The tenth point (the photo-pause change without a version bump) needed no bump: the store version was introduced in the same change set and every store was built after it; the rule is now documented next to `WINDOWS_VERSION` |
+
+### Local runs (CPU)
+
+| Run | Result |
+| --- | --- |
+| Window stores (`python -m pdmfm.windows build cwru nonastreda kaist xjtu_sy`) | 356, 4,241, 4,378 and 9,216 windows in 6 min; 2.4 GB in total; counts equal the EDA's. XJTU-SY labels follow the 10 %-of-life FPT rule (Bearing3_1 at 0.924 of life; Bearing1_4 by kurtosis) |
