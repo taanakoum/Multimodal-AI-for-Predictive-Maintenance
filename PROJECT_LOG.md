@@ -275,3 +275,42 @@ Week 2 (Nov 2-8, plan):
 | Run | Result |
 | --- | --- |
 | Window stores (`python -m pdmfm.windows build cwru nonastreda kaist xjtu_sy`) | 356, 4,241, 4,378 and 9,216 windows in 6 min; 2.4 GB in total; counts equal the EDA's. XJTU-SY labels follow the 10 %-of-life FPT rule (Bearing3_1 at 0.924 of life; Bearing1_4 by kurtosis) |
+| Feature caches (handcrafted and Mantis on T, F, E; CWRU, XJTU-SY, Nonastreda) | Mantis: about 206 inputs/s on 4 threads, 55 min for every arm (the T arm dominates: 48 inputs per XJTU-SY window) |
+| Photos and texts | DINOv2: 512 tool photos (9 tokens) in 118 s, 512 chip and 512 workpiece photos (5 tokens) in 52 s and 39 s, 369 thermal images in 27 s. Qwen3: contexts per load or condition, 3-15 class prototypes per dataset |
+| MOMENT and AST on the 10 % unit-stratified subsample | MOMENT about 19 inputs/s (1 h 10 min); AST 5.8 windows/s with 100-frame inputs (3 min) |
+| Gate 1, preliminary, all local data (`runs/gate1/gate1-cpu-full/`) | See below. 1.5 min for 7 entries x 3 tasks |
+| Gate 1, preliminary, 10 % subsample (`runs/gate1/gate1-cpu-subsample/`) | All 12 entries on the common subsample; too few validation windows to rank (CWRU: about 10 windows for 10 classes), recorded for completeness only |
+
+### Gate 1, preliminary (CPU; Paderborn absent, so not the gate decision)
+
+Balanced accuracy (CWRU 3 hp; Nonastreda inner-validation tools, mean of 5 folds) and RMSE of
+normalized RUL (XJTU-SY inner-validation bearings, mean of 5 folds); all local windows:
+
+| Candidate | CWRU | Nonastreda | XJTU-SY (RMSE) | Mean rank |
+| --- | --- | --- | --- | --- |
+| mantis:F | 1.000 | 0.662 | 0.228 | 2.00 |
+| mantis:E | 0.967 | (no E arm) | 0.195 | 2.33 |
+| mantis:T+E | 0.933 | 0.595 | 0.208 | 2.50 |
+| mantis:T | 0.911 | 0.595 | 0.226 | 3.17 |
+| stats:F (handcrafted reference) | 1.000 | 0.667 | 0.184 | – |
+| stats:E (handcrafted reference) | 0.989 | (no E arm) | 0.183 | – |
+| stats:T (handcrafted reference) | 0.756 | 0.539 | 0.224 | – |
+
+Reading:
+- **Mantis does not beat the handcrafted reference here.** It ties on CWRU, is level on
+  Nonastreda and is worse on XJTU-SY RUL.
+- The spectrum arms (F, E) beat the raw-time arm (T) on every task.
+- CWRU is saturated (balanced accuracy 1.0 even for the handcrafted features), as the EDA predicted.
+- The decision waits for the full MOMENT, AST and per-fold PatchTST caches and for Paderborn
+  (Ruche runbook). If no frozen encoder clearly beats the references there either, that is a
+  finding for the report: it supports the plan's Gate-1 fallback (own PatchTST) and argues for
+  keeping the handcrafted level and band tokens next to the encoder tokens.
+
+### Verification at the end of the phase
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | 229 passed, 24 skipped (5 network, 4 Paderborn/PHM 2010 acceptance, 15 Linux-only SLURM tests) |
+| CI reproduced in fresh Python 3.11 and 3.12 environments (`scripts/ci/run_local_ci.sh`) | 204 passed, 45 skipped (data, weights, SLURM), coverage 80 % (the encoder wrappers need the optional libraries, tested locally); pyright 0 errors |
+| Fresh-environment finding | pandas 3.1 (what CI installs) gives text columns a string dtype; one test asserted `object`. Fixed after commit `1a53d64`, so CI on that commit most likely failed that test |
+| pre-commit, all files | All 9 hooks pass |

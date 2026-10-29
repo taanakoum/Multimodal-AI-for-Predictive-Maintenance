@@ -42,6 +42,15 @@ def _batches(x: np.ndarray, size: int):
         yield x[start : start + size]
 
 
+def _on_device(model, device):
+    """Move a torch module to ``device`` (in place) in evaluation mode. ``torch.nn.Module.to``
+    is called directly because some libraries' own ``.to`` signatures do not type-check."""
+    import torch
+
+    torch.nn.Module.to(model, device)
+    return model.eval()
+
+
 def _torch_device(device: str):
     import torch
 
@@ -96,8 +105,8 @@ class MantisEncoder(Encoder):
     repo = "paris-noah/Mantis-8M"
 
     def __init__(self, device: str = "cpu", batch_size: int = 256) -> None:
-        from mantis.architecture import MantisV1
-        from mantis.trainer import MantisTrainer
+        from mantis.architecture import MantisV1  # pyright: ignore[reportMissingImports]
+        from mantis.trainer import MantisTrainer  # pyright: ignore[reportMissingImports]
 
         _torch_device(device)
         network = MantisV1(device=device).from_pretrained(self.repo)
@@ -118,12 +127,14 @@ class MomentEncoder(Encoder):
     repo = "AutonLab/MOMENT-1-base"
 
     def __init__(self, device: str = "cpu", batch_size: int = 64) -> None:
-        from momentfm import MOMENTPipeline
+        from momentfm import MOMENTPipeline  # pyright: ignore[reportMissingImports]
 
         self.device = _torch_device(device)
-        model = MOMENTPipeline.from_pretrained(self.repo, model_kwargs={"task_name": "embedding"})
+        model = MOMENTPipeline.from_pretrained(
+            str(self.repo), model_kwargs={"task_name": "embedding"}
+        )
         model.init()
-        self.model = model.to(self.device).eval()
+        self.model = _on_device(model, self.device)
         self.batch_size = batch_size
 
     def encode(self, x: np.ndarray) -> np.ndarray:
@@ -133,7 +144,8 @@ class MomentEncoder(Encoder):
         with torch.no_grad():
             for b in _batches(np.asarray(x, dtype=np.float32), self.batch_size):
                 batch = torch.from_numpy(b[:, None, :]).to(self.device)
-                out.append(self.model(x_enc=batch).embeddings.float().cpu().numpy())
+                embeddings = torch.as_tensor(self.model(x_enc=batch).embeddings)
+                out.append(embeddings.float().cpu().numpy())
         return np.concatenate(out)
 
 
@@ -141,12 +153,12 @@ class PatchTSTEncoder(Encoder):
     """Own PatchTST from :mod:`pdmfm.patchtst`; the patch embeddings are averaged."""
 
     def __init__(self, checkpoint: str | Path, device: str = "cpu", batch_size: int = 512) -> None:
-        from transformers import PatchTSTModel
+        from transformers import PatchTSTModel  # pyright: ignore[reportMissingImports]
 
         self.checkpoint = Path(checkpoint)
         self.device = _torch_device(device)
         model = PatchTSTModel.from_pretrained(self.checkpoint, do_mask_input=False)
-        self.model = model.to(self.device).eval()
+        self.model = _on_device(model, self.device)
         self.dim = int(model.config.d_model)
         self.name = f"patchtst-{self.checkpoint.parent.name}"  # e.g. patchtst-fold1
         self.batch_size = batch_size
@@ -177,7 +189,7 @@ def resize_ast_positions(model, max_frames: int):
     import copy
 
     import torch
-    from transformers import ASTModel
+    from transformers import ASTModel  # pyright: ignore[reportMissingImports]
 
     config = copy.deepcopy(model.config)
     config.max_length = max_frames
@@ -214,14 +226,14 @@ class ASTEncoder(Encoder):
         max_frames: int = 100,
         input_rate: float = pp.MODEL_RATE_HZ,
     ) -> None:
-        from transformers import ASTFeatureExtractor, ASTModel
+        from transformers import ASTFeatureExtractor, ASTModel  # pyright: ignore[reportMissingImports]
 
         self.device = _torch_device(device)
-        self.extractor = ASTFeatureExtractor.from_pretrained(self.repo, max_length=max_frames)
-        model = ASTModel.from_pretrained(self.repo)
+        self.extractor = ASTFeatureExtractor.from_pretrained(str(self.repo), max_length=max_frames)
+        model = ASTModel.from_pretrained(str(self.repo))
         if max_frames != model.config.max_length:
             model = resize_ast_positions(model, max_frames)
-        self.model = model.to(self.device).eval()
+        self.model = _on_device(model, self.device)
         self.max_frames, self.input_rate, self.batch_size = max_frames, input_rate, batch_size
 
     def signature(self) -> dict:
@@ -289,10 +301,10 @@ class DinoV2Encoder:
     STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)[:, None, None]
 
     def __init__(self, device: str = "cpu", batch_size: int = 16) -> None:
-        from transformers import AutoModel
+        from transformers import AutoModel  # pyright: ignore[reportMissingImports]
 
         self.device = _torch_device(device)
-        self.model = AutoModel.from_pretrained(self.repo).to(self.device).eval()
+        self.model = _on_device(AutoModel.from_pretrained(self.repo), self.device)
         self.batch_size = batch_size
 
     def signature(self, kind: str) -> dict:
@@ -346,7 +358,7 @@ class Qwen3TextEncoder:
 
     def __init__(self, device: str = "cpu") -> None:
         import torch
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer  # pyright: ignore[reportMissingImports]
 
         _torch_device(device)
         # float32: the checkpoint's bfloat16 is slow on CPU and leaves norms off by ~2e-3.

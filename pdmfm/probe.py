@@ -34,9 +34,10 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -189,7 +190,7 @@ def _cached_features(cache: dict, stores: FeatureStore, store: WindowStore, text
 def run(
     task_names: list[str],
     candidates: list[str],
-    references: list[str] = (),
+    references: Sequence[str] = (),
     run_id: str | None = None,
     out_root: Path | None = None,
     window_root: Path | None = None,
@@ -270,7 +271,7 @@ def run(
                     "n_val": int(val.sum()), metric: np.nan,
                 }  # fmt: skip
                 if text in outcome:
-                    strength, score = outcome[text]
+                    strength, score = cast(tuple[float, dict], outcome[text])
                     record.update(strength=strength, **score)
                     log(f"[gate1] {name} {split.name} {text}: {metric} = {score[metric]:.3f}")
                 else:
@@ -304,25 +305,28 @@ def run(
 def summarize(results: pd.DataFrame) -> pd.DataFrame:
     """Mean score per task and candidate, rank per task (candidates only), mean rank."""
     rows = []
-    for (task, candidate), group in results.groupby(["task", "candidate"]):
+    for key, group in results.groupby(["task", "candidate"]):
+        task, candidate = (str(k) for k in cast(tuple, key))
         kind = TASKS[task].kind
+        values = np.asarray(group[primary(kind)], dtype=float)
+        finite = values[np.isfinite(values)]  # NaN: no applicable arm
         rows.append(
             {
                 "task": task,
                 "candidate": candidate,
                 "is_candidate": bool(group["is_candidate"].iloc[0]),
                 "metric": primary(kind),
-                "score": float(group[primary(kind)].mean()),
-                "std": float(group[primary(kind)].std(ddof=0)),
+                "score": float(finite.mean()) if len(finite) else np.nan,
+                "std": float(finite.std()) if len(finite) else np.nan,
                 "splits": len(group),
             }
         )
     table = pd.DataFrame(rows)
     table["rank"] = np.nan
     for task, group in table[table["is_candidate"]].groupby("task"):
-        sign = -1.0 if TASKS[task].higher_is_better else 1.0
+        sign = -1.0 if TASKS[str(task)].higher_is_better else 1.0
         # A candidate without an applicable arm (NaN score) shares the worst rank.
-        values = np.nan_to_num(sign * group["score"].to_numpy(), nan=np.inf)
+        values = np.nan_to_num(sign * np.asarray(group["score"], dtype=float), nan=np.inf)
         table.loc[group.index, "rank"] = rankdata(values)
     wide = table.pivot(index="candidate", columns="task", values="score")
     ranks = table.pivot(index="candidate", columns="task", values="rank")
@@ -331,9 +335,15 @@ def summarize(results: pd.DataFrame) -> pd.DataFrame:
     summary["is_candidate"] = table.groupby("candidate")["is_candidate"].first()
     summary["cost"] = [cost(c.split(":")[0]) for c in summary.index]
     summary = summary.reset_index()
-    order = summary["is_candidate"].map({True: 0, False: 1})
+    order = np.where(np.asarray(summary["is_candidate"], dtype=bool), 0, 1)  # candidates first
     summary = summary.assign(_order=order).sort_values(["_order", "mean_rank", "cost", "candidate"])
     return summary.drop(columns="_order").reset_index(drop=True)
+
+
+def _number(value, digits: int) -> str:
+    """A table cell: the number, or "-" when there is none."""
+    number = float(value) if isinstance(value, int | float | np.number) else float("nan")
+    return f"{number:.{digits}f}" if np.isfinite(number) else "-"
 
 
 def _markdown(report: dict, summary: pd.DataFrame) -> str:
@@ -348,10 +358,10 @@ def _markdown(report: dict, summary: pd.DataFrame) -> str:
         score_cols = [c for c in summary.columns if c.startswith("score_")]
         header = ["candidate", *[c.removeprefix("score_") for c in score_cols], "mean rank"]
         lines += ["| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
-        for _, row in summary.iterrows():
-            cells = [row["candidate"] + ("" if row["is_candidate"] else " (reference)")]
-            cells += [f"{row[c]:.3f}" if pd.notna(row[c]) else "-" for c in score_cols]
-            cells.append(f"{row['mean_rank']:.2f}" if pd.notna(row["mean_rank"]) else "-")
+        for row in summary.to_dict("records"):
+            cells = [str(row["candidate"]) + ("" if row["is_candidate"] else " (reference)")]
+            cells += [_number(row[c], 3) for c in score_cols]
+            cells.append(_number(row["mean_rank"], 2))
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
         lines.append(
@@ -366,7 +376,7 @@ def _markdown(report: dict, summary: pd.DataFrame) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m pdmfm.probe", description=__doc__.splitlines()[0]
+        prog="python -m pdmfm.probe", description=(__doc__ or "pdmfm").splitlines()[0]
     )
     parser.add_argument("--run-id")
     parser.add_argument("--tasks", nargs="+", default=list(TASKS), choices=sorted(TASKS))

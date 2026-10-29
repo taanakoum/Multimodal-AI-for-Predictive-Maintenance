@@ -99,7 +99,7 @@ Design choices:
 
 Weekly grouped pull requests for GitHub Actions versions and Python dependencies.
 
-## 4. Reliability check (done locally, 2026-10-26)
+## 4. Reliability check (done locally; last on 2026-10-29)
 
 | Check | How | Result |
 |---|---|---|
@@ -110,6 +110,9 @@ Weekly grouped pull requests for GitHub Actions versions and Python dependencies
 | Hooks | `pre-commit run` on every tracked and untracked file | All 9 hooks pass, after two fixes it found (EDA JSON without a final newline; the renamed `ruff-check` hook id) |
 | Full local suite with real data | `pytest` with `PDMFM_DATA_ROOT=D:\Project14\data` | **111 passed, 5 skipped** (network) before the acceptance and regression tests were added; those then passed (2) or skipped (4, data absent) |
 | Acceptance tests themselves | Run against a synthetic layout built to the Paderborn and PHM 2010 documentation | 4 passed: the test code works before the real files arrive |
+| Weeks 2-4, fresh environments (2026-10-29) | `run_local_ci.sh` on Python 3.11 and 3.12, now ending with pyright | **204 passed, 45 skipped** on both; pyright **0 errors**; coverage 80 % (the encoder wrappers need the optional libraries, so CI cannot run them; they are tested locally against the real checkpoints) |
+| Weeks 2-4, full local suite | `pytest` with the real data and cached checkpoints | **229 passed, 24 skipped** (network, Paderborn and PHM 2010 acceptance, Linux-only SLURM tests) |
+| What the fresh environment caught | pandas 3.1 (installed by CI) types text columns as strings; one test asserted `object` | Test made version-independent; it would have failed on GitHub |
 
 **Not covered by CI:**
 - the real data (local and Ruche only);

@@ -201,14 +201,16 @@ class FeatureStore:
         for meta_path in sorted(self.root.glob("*/*/meta.json")):
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             sig = meta.get("signature", {})
+            total = (meta.get("shape") or [0])[0]
+            complete = bool(meta.get("complete", False))
             records.append(
                 {
                     "dataset": sig.get("dataset", meta_path.parent.parent.name),
-                    "arm": sig.get("arm"),
+                    "arm": sig.get("arm") or f"photo:{sig.get('kind')}",  # photo caches: kind
                     "encoder": (sig.get("encoder") or {}).get("encoder"),
-                    "done": meta.get("n_done", 0),
-                    "windows": (meta.get("shape") or [0])[0],
-                    "complete": meta.get("complete", False),
+                    "done": meta.get("n_done", total if complete else 0),
+                    "windows": total,
+                    "complete": complete,
                     "folder": meta_path.parent.name,
                 }
             )
@@ -375,7 +377,7 @@ def _cmd_status(_: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m pdmfm.features", description=__doc__.splitlines()[0]
+        prog="python -m pdmfm.features", description=(__doc__ or "pdmfm").splitlines()[0]
     )
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("extract", help="encode window arms into the cache (resumable)")

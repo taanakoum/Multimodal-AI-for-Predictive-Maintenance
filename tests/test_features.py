@@ -195,3 +195,11 @@ def test_encoder_input_rate_must_match_the_store(store, cache):
 
     with pytest.raises(ValueError, match="expects 16000"):
         cache.extract(store, At16k(), "S", log=quiet)
+
+
+def test_status_lists_photo_caches_as_complete(tmp_path, monkeypatch, cache):
+    monkeypatch.setenv("PDMFM_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(features, "image_paths", lambda d: {"tool": ["raw/a.png"]})
+    features.extract_images("nonastreda", FakeImageEncoder(), root=cache.root, log=quiet)
+    row = cache.status().iloc[0]
+    assert (row["arm"], row["done"], row["windows"], row["complete"]) == ("photo:tool", 1, 1, True)

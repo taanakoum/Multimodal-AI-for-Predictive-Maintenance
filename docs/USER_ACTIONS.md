@@ -18,24 +18,21 @@ like. Commands for the laptop assume the development environment is loaded first
 
 ---
 
-## 1. Commit and push
+## 1. Commit and push the last fixes
 
-Nothing has been committed for you. Since your "Improved CI Pipeline" commit, `git status`
-lists this phase's work. One reasonable split:
+Your commit "Stage 1 Implemtation" (`1a53d64`) holds most of this phase. The working tree has
+the final round on top:
 
-1. `pdmfm/texts/`, `pdmfm/protocols.py`, `tests/test_texts.py`, `tests/test_protocols.py`: texts
-   and splits.
-2. `pdmfm/windows.py`, `pdmfm/arms.py`, `pdmfm/encoders.py`, `pdmfm/features.py`,
-   `pdmfm/preprocess.py`, `pdmfm/datasets/nonastreda.py`, `pdmfm/fetch.py`, `pyproject.toml`
-   and their tests (`test_windows.py`, `test_encoders.py`, `test_features.py`,
-   `test_readers.py`, `test_fetch.py`, `test_real_data.py`, `tests/synthetic.py`,
-   `tests/conftest.py`): stages 1-2.
-3. `pdmfm/probe.py`, `pdmfm/patchtst.py`, `tests/test_probe.py`, `tests/test_patchtst.py`:
-   Gate 1 and PatchTST.
-4. `slurm/`, `tests/test_slurm.py`, the removal of `scripts/ruche/` and `scripts/env/ruche.sh`,
-   `.gitignore`, `docs/`, `PROJECT_LOG.md`, `README.md`: Ruche and documentation.
+- **One test fixed for pandas 3.1**, which CI installs: text columns now have a string dtype,
+  and `test_windows.py` asserted `object`. **CI on `1a53d64` has most likely failed that test**
+  on all four test jobs.
+- **Type checks clean:** pyright reports 0 errors in a CI-like environment and in the full one.
+- **Cache listing:** photo caches now show as complete.
+- **Updated logs and docs:** `PROJECT_LOG.md` and `docs/CI.md`.
 
-Then `git push`. The pre-commit hook checks every commit, and CI runs on the push.
+`git status` lists them. Commit and `git push`; the four test jobs should then be green.
+
+Nothing has been committed for you.
 
 ---
 

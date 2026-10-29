@@ -140,7 +140,7 @@ def _read_manifest(path: Path) -> pd.DataFrame:
         if column in TEXT_COLUMNS or column.startswith("image_"):
             continue
         values = frame[column]
-        numbers = pd.to_numeric(values, errors="coerce")  # "" becomes NaN
+        numbers = pd.Series(pd.to_numeric(values, errors="coerce"), index=values.index)  # "" -> NaN
         if numbers.notna().sum() == (values != "").sum():  # every non-empty value is a number
             frame[column] = numbers
     return frame
@@ -482,7 +482,7 @@ def _cmd_info(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m pdmfm.windows", description=__doc__.splitlines()[0]
+        prog="python -m pdmfm.windows", description=(__doc__ or "pdmfm").splitlines()[0]
     )
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("build", help="build window stores (checks CPU and RAM first)")

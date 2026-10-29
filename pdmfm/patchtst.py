@@ -130,7 +130,7 @@ def pretrain(
     log=print,
 ) -> dict:
     import torch
-    from transformers import PatchTSTConfig, PatchTSTForPretraining
+    from transformers import PatchTSTConfig, PatchTSTForPretraining  # pyright: ignore[reportMissingImports]
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -157,7 +157,8 @@ def pretrain(
     device_ = torch.device(device)
     if device_.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
-    model = PatchTSTForPretraining(PatchTSTConfig(**settings["model"])).to(device_)
+    model = PatchTSTForPretraining(PatchTSTConfig(**settings["model"]))
+    torch.nn.Module.to(model, device_)  # in place; transformers' .to does not type-check
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     steps_per_epoch = math.ceil(len(train) / batch_size)
     total, warmup = epochs * steps_per_epoch, max(1, int(0.05 * epochs * steps_per_epoch))
@@ -252,7 +253,7 @@ def pretrain(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m pdmfm.patchtst", description=__doc__.splitlines()[0]
+        prog="python -m pdmfm.patchtst", description=(__doc__ or "pdmfm").splitlines()[0]
     )
     parser.add_argument(
         "--fold", type=int, help="outer fold 1-5; omit only for smoke tests (all source units)"

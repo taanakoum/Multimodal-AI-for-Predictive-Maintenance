@@ -7,6 +7,7 @@ import json
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 from synthetic import FakeReader, cwru_reader, nonastreda_reader, xjtu_reader
 
@@ -55,7 +56,7 @@ def test_cwru_manifest_labels_contexts_and_speed(cwru):
         "outer_race/0.007 in",
         "ball/0.007 in",
     }
-    assert m["load_hp"].dtype.kind == "i" and m["unit"].dtype == object
+    assert m["load_hp"].dtype.kind == "i" and pd.api.types.is_string_dtype(m["unit"])
     # The context depends on the load only (nominal speed), never on the recording.
     assert m.groupby("load_hp")["context"].nunique().eq(1).all() and m["context"].nunique() == 4
     assert np.allclose(m["shaft_hz"], m["rpm"] / 60, rtol=5e-3) and set(m["shaft_source"]) == {
