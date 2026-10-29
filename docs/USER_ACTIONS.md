@@ -10,29 +10,31 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the current work | Ruche clones the repository from GitHub; CI runs | 10 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1 | about 2 h of your time over a few days, the rest is queue and compute |
+| 1 | Commit and push the Plan B phase (week 5); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), now with step 5: Plan B (§16) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B with the Gate-1 winner and on Paderborn | about 2-3 h of your time over a few days, the rest is queue and compute |
 | 3 | Obtain PHM 2010 (manual download) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
-| 4 | Three decisions (end of this page) | Scope of the next weeks | — |
-| — | Done: GitHub repository, CI, pre-commit hook | — | — |
+| 4 | Four decisions (section 4) | Scope of the next weeks | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80` | — | — |
 
 ---
 
-## 1. Commit and push the last fixes
+## 1. Commit and push the Plan B phase
 
-Your commit "Stage 1 Implemtation" (`1a53d64`) holds most of this phase. The working tree has
-the final round on top:
+Commits `1a53d64` and `b837e80` hold stages 1-3. This phase adds stage 4 (Plan B) and is not
+committed. Everything is ready for you to review and commit:
 
-- **One test fixed for pandas 3.1**, which CI installs: text columns now have a string dtype,
-  and `test_windows.py` asserted `object`. **CI on `1a53d64` has most likely failed that test**
-  on all four test jobs.
-- **Type checks clean:** pyright reports 0 errors in a CI-like environment and in the full one.
-- **Cache listing:** photo caches now show as complete.
-- **Updated logs and docs:** `PROJECT_LOG.md` and `docs/CI.md`.
+```powershell
+cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
+git status -sb                  # new: pdmfm/losses.py, metrics.py, model/, train.py, planb.py, 4 test files
+git diff --stat                 # changed: docs, README, PROJECT_LOG, slurm/status.sh, tests
+git add -A
+git commit -m "Stage 4: Plan B baseline"
+git push
+```
 
-`git status` lists them. Commit and `git push`; the four test jobs should then be green.
-
-Nothing has been committed for you.
+`runs/` is git-ignored, so the local Plan B results stay out of the commit. The pre-commit
+hook runs ruff on the commit. Then open the repository's **Actions** tab and check that CI
+is green (lint, 4 test legs, advisory pyright). If a job is red, paste its log.
 
 ---
 
@@ -60,8 +62,15 @@ show. In short:
 4. **Steps 2-3 (§13-§14):** the feature jobs, and the five PatchTST pretraining jobs with
    their feature jobs.
 5. **Step 4 (§15):** the Gate-1 probe on all four tasks.
-6. **Step 5 (§16):** download the caches and results, then tell me. I write up Gate 1 from
-   `runs/gate1/gate1-v1/`.
+6. **Step 5 (§16): Plan B.** Read the Gate-1 winner with the §16.1 lines. Then submit the
+   §16.2 loop: Nonastreda, XJTU-SY and Paderborn with the winner and with the handcrafted
+   reference, plus a photo-free Nonastreda run. Check Paderborn's temperature as §16.3 says.
+7. **Step 6 (§17):** download the caches and results (now with `runs/planb`), then tell me. I
+   write up Gate 1 from `runs/gate1/gate1-v1/` and the Plan B tables from `runs/planb/`.
+
+If you run only part of the runbook before Gate 1 is final, Plan B can still run on Paderborn
+with Mantis (its caches come from §13): use `--encoder mantis --arms F` in the §16.2 loop and
+a run id such as `planb-mantis-paderborn`.
 
 ---
 
@@ -123,6 +132,25 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
   split, plus a recorder artifact that separates normal from fault on its own
   (`docs/EDA_REPORT.md`). My recommendation is to use CWRU for pretraining and Gate 1 only,
   never as evidence. Gate 1 keeps it as one of its four tasks, as the plan fixes.
+- **D. Calibrated wear and RUL intervals.** Plan B's 90 % NIG intervals are too narrow on the
+  local runs (`PROJECT_LOG.md`, week 5). The plan calibrates only the classes (temperature
+  scaling). The regression counterpart is one scale factor on the interval, fitted on the
+  same inner-validation units and reported next to the raw coverage. It adds about 20 lines
+  and one row per table. My recommendation is yes, before Gate 2, so every fusion candidate
+  is compared with calibrated intervals too.
+
+---
+
+## What comes next (my side)
+
+| Week | Stage | What I build and test locally | What then needs Ruche |
+|---|---|---|---|
+| 6-7 (Nov 30 - Dec 13) | **Gate 2: fusion search** | The four other fusion candidates on the cached tokens, each ≤ 3 M parameters, sharing Plan B's inputs, heads, training loop and evaluation: concat-MLP, Perceiver latents (32 latents, 2 cross- + 4 self-attention layers), MBT bottleneck (4 tokens, 4 layers), C2F-N (sensor hub with gated landmarks per other modality). AdamW 3e-4 with a cosine schedule, 50 epochs, modality dropout 0.3. Then missing-modality curves and the Gate-2 rule (validation macro-F1 or RMSE, then robustness, then ECE; ties to the smaller model). Runs locally on Nonastreda and XJTU-SY | The same search with the Gate-1 winner and on Paderborn: one runbook section, like §16 |
+| 8-9 (Dec 14-27) | Fusion pretraining | Masked latent modelling on cached tokens, cross-modal InfoNCE, text anchoring; corpus minus each fold's held-out units; smoke tests on CPU | The pretraining jobs |
+| 10-11 | Adaptation | Few-shot draws, linear probe vs LoRA vs full fine-tuning on KAIST, Paderborn real damage, PHM 2010 | The sweeps (holiday queue) |
+
+If Gate 2 finds no candidate better than late aggregation on the validation units, Plan B
+becomes the model (plan, Gate 2), and weeks 8-9 pretrain its per-modality adapters instead.
 
 ---
 

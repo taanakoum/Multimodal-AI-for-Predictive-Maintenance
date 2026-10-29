@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-screen overview: your jobs, the window stores, the feature caches, the PatchTST
-# pretraining runs, the Gate-1 runs, logs that contain errors, and disk use.
+# pretraining runs, the Gate-1 and Plan B runs, logs that contain errors, and disk use.
 # Usage, from anywhere:  source slurm/env.sh && bash slurm/status.sh
 # It only reads files, so it may run on the login node.
 cd "$(dirname "$0")/.." || exit 1
@@ -48,6 +48,19 @@ for report in runs/gate1/*/report.json; do
     [ -f "$report" ] || continue
     found=1
     python -c "import json, sys; r = json.load(open(sys.argv[1])); print(f\"  {r['run_id']:24s} winner {r['winner']}  ({len(r['skipped'])} skipped)\")" "$report"
+done
+[ "$found" -eq 1 ] || echo "  none yet"
+
+echo
+echo "== Plan B runs (results of 15 = 5 outer folds x 3 seeds)"
+found=0
+for folder in runs/planb/*/; do
+    [ -d "$folder" ] || continue
+    found=1
+    n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
+    summary=""
+    [ -f "${folder}summary.md" ] && summary="  summary: ${folder}summary.md"
+    echo "  $(basename "$folder"): $n of 15$summary"
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 

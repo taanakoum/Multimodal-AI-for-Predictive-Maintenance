@@ -72,5 +72,18 @@ def test_status_runs_without_squeue(tmp_path):
         "== Feature caches",
         "== PatchTST",
         "== Gate-1",
+        "== Plan B",
     ):
         assert header in result.stdout
+
+
+def test_status_counts_plan_b_results(tmp_path):
+    run = tmp_path / "runs" / "planb" / "planb-v1-nonastreda"
+    run.mkdir(parents=True)
+    for name in ("fold1-seed0.json", "fold1-seed1.json", "fold1-seed0.npz", "summary.md"):
+        (run / name).write_text("{}")
+    shutil.copytree(SLURM, tmp_path / "slurm")
+    env = {**os.environ, "PDMFM_DATA_ROOT": str(tmp_path / "data")}
+    result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "planb-v1-nonastreda: 2 of 15" in result.stdout and "summary.md" in result.stdout

@@ -58,7 +58,7 @@ pre-commit install                        # same lint and format checks before e
 
 GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 3.12, then an advisory type check. A weekly workflow checks that the data sources still serve the files we used. See [`docs/CI.md`](docs/CI.md).
 
-## Pipeline (stages 1-3 of the plan)
+## Pipeline (stages 1-4 of the plan)
 
 ```powershell
 python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda      # 1: window stores (model input, labels, contexts)
@@ -67,6 +67,7 @@ python -m pdmfm.features images                                  # 2: DINOv2 pho
 python -m pdmfm.features texts                                   #    Qwen3 contexts and class prototypes
 python -m pdmfm.patchtst --fold 1 --device cuda                  #    own PatchTST, per outer fold (Ruche)
 python -m pdmfm.probe --run-id gate1 --candidates mantis:T mantis:T+E moment:T ...   # 3: Gate 1
+python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona     # 4: Plan B
 python -m pdmfm.features status                                  # what is cached
 ```
 
@@ -78,6 +79,11 @@ python -m pdmfm.features status                                  # what is cache
 - **Splits.** All splits are by physical unit (`pdmfm.protocols`).
 - **Stage 3.** Gate 1 ranks encoder-and-arm candidates over its four tasks on
   inner-validation units only.
+- **Stage 4.** Plan B, the baseline and fallback model: one evidential expert per modality
+  (force, vibration, current, slow channels, photos), with text-anchored class heads and NIG
+  regression heads. Experts are combined by Dempster's rule (classes) and MoNIG (wear, RUL),
+  and temperature-scaled on inner-validation units. It runs over 5 outer folds × 3 seeds,
+  with per-modality, missing-modality and baseline results (`runs/planb/<run-id>/summary.md`).
 - **Ruche.** MOMENT, AST and PatchTST at full scale run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
 
 ## Heavy jobs and Ruche
@@ -113,6 +119,11 @@ pdmfm/            package
   features.py     stage 2: resumable feature caches; photo and text caches
   patchtst.py     own PatchTST, masked-patch pretraining per outer fold
   probe.py        stage 3: Gate 1
+  losses.py       evidential rules and losses: Dempster's rule (TMC), Dirichlet loss, NIG loss, MoNIG
+  metrics.py      accuracy, macro-F1, ECE, Brier, NLL, temperature scaling, interval coverage, PHM 2012 score
+  model/          per-modality token sets from the caches (inputs.py), encoders and heads (layers.py), Plan B (late.py)
+  train.py        supervised training on cached features: losses, checkpoint selection, bag aggregation
+  planb.py        stage 4: Plan B over outer folds and seeds; summary tables
 tests/            pytest suite (synthetic data; real-data, checkpoint, acceptance and network tests are marked)
 scripts/eda/      exploratory data analysis
 scripts/ci/       local CI reproduction, data-source check

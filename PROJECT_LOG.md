@@ -6,12 +6,12 @@ This is the running record of tasks, progress, findings, implementations and dec
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-3 of the plan (weeks 2-4) implemented and tested: texts, unit-level splits, window stores, encoder bank, feature cache, own PatchTST, Gate-1 probe. Local CPU part run; the GPU part is ready for Ruche (`docs/RUCHE_RUNBOOK.md`) |
-| Tests | See "Week 2-4" below for the counts; lint, format and pre-commit clean |
+| Phase | Stages 1-4 of the plan (weeks 2-5) implemented and tested. Stage 4 (Plan B: per-modality evidential experts, Dempster's rule and MoNIG) run locally on Nonastreda and XJTU-SY (week 5). The GPU part and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16) |
+| Tests | See "Week 5" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (manual download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
-| Needs you | `docs/USER_ACTIONS.md`: commit and push; run the Ruche runbook; PHM 2010; 3 decisions |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push week 5; run the Ruche runbook (now with Plan B); PHM 2010; 4 decisions |
 
 ## Week 1 — setup, downloads and verification
 
@@ -314,3 +314,125 @@ Reading:
 | CI reproduced in fresh Python 3.11 and 3.12 environments (`scripts/ci/run_local_ci.sh`) | 204 passed, 45 skipped (data, weights, SLURM), coverage 80 % (the encoder wrappers need the optional libraries, tested locally); pyright 0 errors |
 | Fresh-environment finding | pandas 3.1 (what CI installs) gives text columns a string dtype; one test asserted `object`. Fixed after commit `1a53d64`, so CI on that commit most likely failed that test |
 | pre-commit, all files | All 9 hooks pass |
+
+## Week 5 (2026-10-29): stage 4, the Plan B baseline
+
+Plan B is the plan's baseline, its fusion candidate 1 (late-evidential) at Gate 2, and the
+fallback model. It is implemented, tested and run locally on Nonastreda and XJTU-SY. Paderborn
+and the final Gate-1 encoder run on Ruche (runbook §16).
+
+### What was implemented
+
+| File | Purpose |
+| --- | --- |
+| `pdmfm/losses.py` | Rewritten from the papers (their repositories carry no licence). TMC: opinions from evidence, Dempster's rule with conflict, the expected cross-entropy plus annealed KL loss. Deep evidential regression: NIG parameters, NLL and regularizer, Student-t predictive. MoNIG summation, skipping absent modalities |
+| `pdmfm/metrics.py` | Accuracy, balanced accuracy, macro-F1; ECE (15 bins), Brier, NLL; temperature scaling fitted on validation NLL; RMSE, MAE, 90 % interval coverage and width; PHM 2012 score |
+| `pdmfm/model/inputs.py` | Token sets per modality from the caches, row-aligned with the window store. One expert per channel family (force, vibration, current), with level tokens relative to the unit's healthy baseline. A slow-channel expert (Paderborn temperature: mean and slope relative to the same baseline). A photo expert (previous pass's tool, chip and workpiece tokens with their age; masked when absent, never zeros). Text prototypes checked against the YAML order |
+| `pdmfm/model/layers.py`, `model/late.py` | Modality encoder: adapter, role, channel, level and age embeddings, attention pooling with one learned query. Text-anchored evidential head (cosine to the frozen Qwen prototypes, softplus evidence) and NIG head. `LateEvidential` combines them by Dempster's rule and MoNIG |
+| `pdmfm/train.py` | Training on cached features: TMC on each present modality and on the combination (KL weight min(1, epoch/10)); NIG loss on each modality and on the fusion, on standardized targets. AdamW 1e-3, 50 epochs. The epoch kept is the best on the inner-validation units by mean(bag macro-F1, 1 − RMSE/std). Bags (passes, recordings) average their windows' evidence and NIG parameters |
+| `pdmfm/planb.py` | Stage 4 runner: 5 outer folds × 3 seeds; temperature fitted on the inner-validation units; results per fold and seed (atomic, resumable, refuses changed settings), then `summary.csv` and `summary.md`. Reports the combined model before and after calibration, each modality alone, the model without each modality, trust per modality, and the majority, persistence and training-mean baselines. Per-fold inputs where they depend on the fold (Paderborn's baseline, `patchtst-fold{fold}`); `--without` leaves modalities out |
+| `slurm/status.sh` | Counts Plan B results per run (`15 of 15` when complete) |
+| `docs/RUCHE_RUNBOOK.md` | New §16 (Plan B with the Gate-1 winner, the handcrafted reference, Paderborn, the temperature check); download and operating sections renumbered |
+| Tests | `test_evidential` (23 cases), `test_metrics` (12), `test_inputs` (22), `test_planb` (23), one new `test_slurm` test; `tests/synthetic.py` gains a Paderborn reader and the cache builders |
+
+### Design decisions
+
+| Decision | Reason |
+| --- | --- |
+| One expert per channel family, one for slow channels, one for photos | The plan's "per-modality evidential heads"; channels of one family share a sensor type and rate |
+| Context text is not an expert | It never names the state (by construction), so its opinion would be vacuous; it stays for the leakage check and the fusion stages |
+| An absent modality has zero evidence, and its NIG is skipped | A vacuous opinion is the identity of Dempster's rule (tested), so missing data needs no imputation |
+| Paderborn's level baseline is the healthy *training* bearings at the same setting, per fold | The plan's rule; a test bearing never enters its own reference |
+| Persistence = the previous bag's true label or wear of the same unit | The plan's baseline; it assumes the last inspection is known, so it is a strong reference rather than a deployable model (amendment in `docs/PLAN.md`) |
+| Window-level temperature, applied to bag probabilities as well | One parameter fitted on the inner-validation windows, as the plan says |
+
+### Problems found and fixed in this phase
+
+| Problem | How it was found | Fix |
+| --- | --- | --- |
+| Paderborn had no level-baseline rule, and slow channels were no modality: Plan B would have stopped on Ruche | Writing the runbook step | Fold-aware baseline (`train_units`), slow-channel expert with a small MLP embedding (a LayerNorm over two numbers would erase them); tested on a synthetic Paderborn store |
+| A per-fold winner (`patchtst-fold{fold}`) could not run in Plan B | Same | Inputs assembled per fold when the encoder or the baseline depends on it |
+| The channel embedding was sized from token channels only; a level channel without tokens would have indexed past it | Review | Sized from token and level channels; tested |
+| `bag_mean` found each bag's first row in O(n·bags) | Review | `np.minimum.at`, O(n) |
+| A learning test passed or failed with the random initialization (12 test bags) | Adding the slow role changed the initialization | Three seeds at lr 3e-3; checks the mean and every seed against the baselines |
+| 12 pyright findings (Optional subscripts, numpy and pandas stubs, a buffer type) | `pyright pdmfm` | Fixed; 0 errors |
+| Paderborn temperature may follow the recording session, as on KAIST (EDA finding 2) | Review against the EDA | `--without slow`, and a check in runbook §16.3 |
+
+### Local runs (CPU, 5 outer folds × 3 seeds, test units, mean ± std)
+
+All runs used AdamW 1e-3, 50 epochs and d = 256; results are in `runs/planb/<run-id>/`.
+
+**Nonastreda** (leave-two-tools-out; a bag is a pass; 3 wear classes and flank wear in µm):
+
+| Run | Bag macro-F1 | Bag balanced accuracy | Window ECE, raw → calibrated | Wear RMSE (µm) | 90 % interval coverage |
+| --- | --- | --- | --- | --- | --- |
+| Mantis F + photos (`planb-nona-mantis-F`) | **0.781 ± 0.074** | 0.782 ± 0.068 | 0.244 → 0.108 | 23.3 ± 11.0 | 0.69 |
+| Handcrafted F + photos (`planb-nona-stats-F`) | 0.776 ± 0.089 | 0.782 ± 0.077 | 0.239 → 0.112 | 23.5 ± 10.9 | 0.69 |
+| Mantis F, no photos (`planb-nona-mantis-F-nophoto`) | 0.532 ± 0.134 | 0.599 ± 0.113 | 0.156 → 0.144 | 33.0 ± 9.5 | 0.70 |
+| Persistence (previous pass's label and wear) | 0.756 ± 0.106 | 0.755 ± 0.101 | – | **20.6 ± 9.4** | – |
+| Majority class / training mean | 0.158 ± 0.041 | 0.333 | – | 44.6 ± 11.0 | – |
+
+Inside the Mantis + photos model, the photo alone gives macro-F1 0.786, the force alone 0.428.
+Without force it gives 0.790; without the photo, 0.428. Mean trust is 0.30 for force and 0.49
+for the photo, and the mean conflict is 0.07. The model has 1.31 M parameters.
+
+**XJTU-SY** (one bearing per condition held out per fold; normalized RUL; a bag is a
+snapshot):
+
+| Run | RMSE | MAE | 90 % coverage | 90 % width | PHM 2012 score |
+| --- | --- | --- | --- | --- | --- |
+| Mantis F + E (`planb-xjtu-mantis-FE`) | 0.177 ± 0.079 | 0.106 ± 0.068 | 0.79 | 0.215 | 0.662 |
+| Handcrafted F + E (`planb-xjtu-stats-FE`) | **0.158 ± 0.073** | 0.093 ± 0.057 | 0.73 | 0.204 | 0.678 |
+| Training mean | 0.300 ± 0.073 | 0.240 ± 0.046 | – | – | – |
+
+The PHM 2012 score here averages every snapshot past FPT and before it (where RUL = 1). It
+is not the challenge's score at fixed cut-off points, so it compares runs only with each
+other.
+
+Reading:
+1. **Plan B is a working baseline.** On held-out Nonastreda tools it reaches macro-F1 0.78
+   and accuracy 0.82, against a published ~75 % from a less strict protocol. It beats the
+   persistence reference on 4 of 5 folds (0.781 against 0.756 on average), but within one
+   standard deviation; the paired tests come with the report.
+2. **The previous pass's photos carry the prediction.** The photo alone equals the
+   combination; force alone is weak (0.43).
+3. **Missing-modality robustness is poor.** Without the photo, the combined model falls to
+   0.43. A force-only model trained on its own reaches 0.53: checkpoint selection follows the
+   combined score, which the photo dominates. This motivates the plan's modality dropout
+   (0.3) in the Gate-2 fusion search, and Gate 2 must report the without-photo rows.
+4. **Calibration.** The evidential class head is *under*confident (fitted temperature about
+   0.4, which sharpens). Temperature scaling lowers the window ECE from 0.24 to 0.11 and the
+   Brier score from 0.385 to 0.308.
+5. **Regression.** Plan B clearly beats the training mean on wear and RUL, but not
+   persistence on wear (23.3 against 20.6 µm). Its 90 % intervals are too narrow: coverage
+   0.69 on Nonastreda and 0.73-0.79 on XJTU-SY. See decision D in `docs/USER_ACTIONS.md`.
+6. **Encoder.** Mantis and the handcrafted features tie on Nonastreda (0.781 against 0.776),
+   and the handcrafted features are better on XJTU-SY RUL (0.158 against 0.177), as in the
+   preliminary Gate 1.
+7. **Cost.** About 60-70 s per fold and seed on Nonastreda with photos, and 25 s on XJTU-SY,
+   with 5 CPU threads.
+
+Two operational notes:
+- One fold of the handcrafted Nonastreda run reports 25,000 s. The laptop slept during it;
+  its results are unaffected.
+- The RAM guard refused three runs at its 2 GB threshold. A run peaks at about 0.6 GB, so the
+  threshold is now 1 GB.
+
+### Verification at the end of the phase
+
+| Check | Result |
+| --- | --- |
+| New tests (synthetic stores and caches; no data needed) | 80: `test_evidential` 23, `test_metrics` 12, `test_inputs` 22, `test_planb` 23; plus one `test_slurm` test (Linux). Line coverage of the new modules 99 % |
+| Full suite with the real data and the cached checkpoints | 309 passed, 25 skipped (5 network, 4 Paderborn/PHM 2010 acceptance, 16 Linux-only SLURM tests) |
+| CI reproduced in fresh Python 3.11 and 3.12 environments (`scripts/ci/run_local_ci.sh`) | 284 passed, 46 skipped on both; coverage 85 %; pyright 0 errors |
+| ruff check and format; pre-commit on every new and changed file | Clean; all hooks pass |
+| `slurm/status.sh` Plan B section | Run under Git Bash against a fake run folder (`2 of 15`, summary found); its test runs in CI on Ubuntu |
+
+### Decisions
+
+| Date | Decision | Reason |
+| --- | --- | --- |
+| 2026-10-29 | Plan B experts per channel family, slow channels and photos; context text is not an expert | Above (design decisions) |
+| 2026-10-29 | Local Plan B with Mantis F (the preliminary Gate-1 winner) and the handcrafted reference; the final encoder runs on Ruche (§16) | Gate 1 is not final until the GPU caches and Paderborn exist |
+| 2026-10-29 | Plan B's RAM guard at 1 GB | Measured peak 0.6 GB; the 2 GB guess refused runs on an idle CPU |
+| Open | Calibrated regression intervals (decision D in `docs/USER_ACTIONS.md`) | Coverage 0.69-0.79 for a 90 % interval |

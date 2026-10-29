@@ -43,7 +43,11 @@ $env:PDMFM_NETWORK_TESTS = "1"; pytest -m network   # publishers still serve the
 | `test_features.py` | Cached features equal online encoding; resume after a crash; subsamples; signature changes give new folders; photo and text caches |
 | `test_probe.py` | Gate 1 on synthetic stores: scores per task, validation units only, shared rows, per-fold models, inapplicable arms ranked last, tie to the cheaper encoder, parallel = serial |
 | `test_patchtst.py` | Pretraining corpus per fold; resume after an interruption; refusal of other settings; the checkpoint loads as an encoder |
-| `test_slurm.py` | The Ruche scripts parse; chains link each part to the previous one; jobs refuse to run outside SLURM; status runs anywhere (Linux only) |
+| `test_evidential.py` | Dempster's rule on hand-computed opinions (conflict, agreement, vacuous identity, commutativity, associativity); TMC loss and KL by closed form; NIG NLL equals the Student-t log density; MoNIG by hand; absent modalities skipped; a fitted NIG gives 90 % coverage |
+| `test_metrics.py` | ECE, Brier and NLL by hand; temperature scaling repairs a known overconfidence and leaves calibrated predictions alone; Student-t interval coverage and width; PHM 2012 score values |
+| `test_inputs.py` | Token sets from the caches: cached tokens copied unchanged, roles and channels, no Fz level, levels relative to each tool's first pass (and, for Paderborn, to the healthy *training* bearings per setting), previous-pass photos with age and masks, slow-channel tokens, absent rows for uncached windows, text prototypes in YAML order |
+| `test_planb.py` | Plan B: shapes; an absent or dropped modality leaves the other opinion and NIG unchanged; masked tokens have no effect; ≤ 3 M parameters at full size; reproducible training; learning on synthetic wear classes; resume and refusal of other settings; persistence baselines on a known sequence; per-fold inputs (Paderborn, `{fold}` encoders); `--without`; the command line |
+| `test_slurm.py` | The Ruche scripts parse; chains link each part to the previous one; jobs refuse to run outside SLURM; status runs anywhere and counts Plan B results (Linux only) |
 | `test_real_data.py` | Facts verified on the real downloads and the window stores built from them, kept as regression tests; acceptance tests for Paderborn and PHM 2010 (`docs/USER_ACTIONS.md`) |
 | `test_network.py` | Publisher sizes and hashes (Najafi, KAIST, MBHM, CWRU, NASA) |
 
@@ -113,6 +117,8 @@ Weekly grouped pull requests for GitHub Actions versions and Python dependencies
 | Weeks 2-4, fresh environments (2026-10-29) | `run_local_ci.sh` on Python 3.11 and 3.12, now ending with pyright | **204 passed, 45 skipped** on both; pyright **0 errors**; coverage 80 % (the encoder wrappers need the optional libraries, so CI cannot run them; they are tested locally against the real checkpoints) |
 | Weeks 2-4, full local suite | `pytest` with the real data and cached checkpoints | **229 passed, 24 skipped** (network, Paderborn and PHM 2010 acceptance, Linux-only SLURM tests) |
 | What the fresh environment caught | pandas 3.1 (installed by CI) types text columns as strings; one test asserted `object` | Test made version-independent; it would have failed on GitHub |
+| Week 5 (Plan B), fresh environments (2026-10-29) | `run_local_ci.sh` on Python 3.11 and 3.12 | **284 passed, 46 skipped** on both; pyright **0 errors**; coverage 85 %; the new modules (losses, metrics, model, train, planb) at 99 % |
+| Week 5, full local suite | `pytest` with the real data and cached checkpoints | **309 passed, 25 skipped** (5 network, 4 Paderborn and PHM 2010 acceptance, 16 Linux-only SLURM tests) |
 
 **Not covered by CI:**
 - the real data (local and Ruche only);

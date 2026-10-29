@@ -21,6 +21,11 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   with none takes the worst rank on that task.
 > - Nonastreda passes are separated by a photo pause on each tool's clock, so every window of
 >   a pass, its first included, receives the previous pass's photos.
+> - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
+>   slow channels and one for the photos. Context text is not an expert: it never names the
+>   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or
+>   wear) of the same unit, with the training majority (or mean) for a unit's first bag; it
+>   assumes the last inspection is known, so it is a strong reference, not a deployable model.
 
 ## Summary
 

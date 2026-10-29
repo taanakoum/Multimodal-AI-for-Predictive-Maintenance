@@ -1,11 +1,12 @@
-# Ruche runbook: encoder caches, PatchTST pretraining and Gate 1
+# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1 and Plan B
 
 This runbook finishes stages 2-3 of the plan on **Ruche**, the cluster of the Mésocentre
 Paris-Saclay:
 
 - the feature caches that are too slow for the laptop (MOMENT, AST, your own PatchTST);
 - the Paderborn data, which only Ruche can download;
-- the Gate-1 encoder probe on all four of its tasks.
+- the Gate-1 encoder probe on all four of its tasks;
+- the Plan B baseline (stage 4) with the Gate-1 winner, on Nonastreda, XJTU-SY and Paderborn.
 
 It follows the structure and the conventions of the OmniFuser runbook
 (`../OmniFuser/TRAINING_RUNBOOK_RUCHE.md`):
@@ -29,8 +30,8 @@ Ruche** (in the SSH session).
 |---|---|
 | Overview | What runs where · the jobs · before you start · the path at a glance |
 | A: Set up (once) | §1 Laptop · §2 Connect · §3 Storage · §4 Code · §5 Data · §6 Python environment · §7 `slurm/env.sh` · §8 Weights · §9 SLURM scripts |
-| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: download |
-| C: Operating | §17 Watch, resume, cancel · §18 Troubleshooting · §19 Rules · §20 Cheat sheet |
+| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B · §17 Step 6: download |
+| C: Operating | §18 Watch, resume, cancel · §19 Troubleshooting · §20 Rules · §21 Cheat sheet |
 
 ## Overview
 
@@ -45,6 +46,8 @@ Ruche** (in the SSH session).
 | MOMENT (arms T, F, E) and AST (arm S) on all windows | Ruche GPU | About 40 h each on the laptop CPU; minutes on an A100 |
 | Own PatchTST pretraining (5 folds), then its features | Ruche GPU | Pretraining needs a GPU |
 | Gate-1 probe on all four tasks | Ruche CPU job (or the laptop) | Logistic and ridge regressions |
+| Plan B on Nonastreda and XJTU-SY with Mantis and the handcrafted reference | Laptop (done; `PROJECT_LOG.md`, week 5) | About 70 s per fold and seed on the CPU |
+| Plan B with the Gate-1 winner, and on Paderborn | Ruche GPU | Needs the full caches and the Paderborn store; minutes on an A100 |
 
 ### The jobs
 
@@ -55,9 +58,10 @@ Ruche** (in the SSH session).
 | 2 | Feature caches: handcrafted (CPU), Mantis, MOMENT, AST (GPU) | `cpu_short`, `gpua100` | Minutes to an hour each | `$PDMFM_DATA_ROOT/interim/features/` |
 | 3 | PatchTST pretraining, one model per outer fold, then its features | `gpua100` | Under an hour per fold | `runs/patchtst/fold1..5/` |
 | 4 | Gate-1 probe | `cpu_short` | Under 1 h | `runs/gate1/gate1-v1/` |
-| 5 | Download caches and results | laptop | Minutes | `D:\Project14\data\interim\features`, `runs/` |
+| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference | `gpua100` | Minutes to an hour per job | `runs/planb/planb-v1-*/` |
+| 6 | Download caches and results | laptop | Minutes | `D:\Project14\data\interim\features`, `runs/` |
 
-The times are estimates. The first job of each kind tells you the real ones (§17).
+The times are estimates. The first job of each kind tells you the real ones (§18).
 
 ### Before you start
 
@@ -77,7 +81,8 @@ The times are estimates. The first job of each kind tells you the real ones (§1
 4. **Every session:** the §10 block.
 5. **Step 0** checks (§11), then **Paderborn** (§12).
 6. **Feature caches** (§13) and **PatchTST** (§14), in parallel.
-7. **Gate 1** (§15) when steps 1-3 are complete; then **download** (§16).
+7. **Gate 1** (§15) when steps 1-3 are complete.
+8. **Plan B** (§16) with the Gate-1 winner; then **download** (§17).
 
 ---
 
@@ -116,7 +121,7 @@ $Ruche = "$RucheLogin@ruche.mesocentre.universite-paris-saclay.fr"
 ssh $Ruche
 ```
 
-Define the two variables in every new PowerShell window; §5 and §16 use them. The OmniFuser
+Define the two variables in every new PowerShell window; §5 and §17 use them. The OmniFuser
 runbook (§3) shows how to log in with an SSH key instead of a password.
 
 ## 3. Storage
@@ -468,7 +473,7 @@ sbatch --job-name=gate1 slurm/cpu.sbatch python -m pdmfm.probe --run-id gate1-v1
 - The probe fits the candidates of each split in parallel, one process per granted CPU
   (8 here). If the log ends with `DUE TO TIME LIMIT`, resubmit with a longer CPU partition
   from `sinfo -s` (`--partition=… --time=03:00:00` before `slurm/cpu.sbatch`), or run the
-  same command on the laptop after §16.
+  same command on the laptop after §17.
 - The result is in `runs/gate1/gate1-v1/`:
   - `summary.md`: the table and the winner;
   - `summary.csv`: scores and ranks per task;
@@ -480,12 +485,88 @@ sbatch --job-name=gate1 slurm/cpu.sbatch python -m pdmfm.probe --run-id gate1-v1
 - If no frozen encoder beats your own PatchTST, the plan's Gate 1 picks the self-pretrained
   PatchTST.
 
-## 16. Step 5: download
+## 16. Step 5: Plan B
+
+Plan B is the plan's stage 4 and its fallback model: one evidential expert per modality,
+combined by Dempster's rule for the classes and by MoNIG for wear and RUL. It trains on the
+cached features, so it encodes nothing new. Each job runs the 5 outer folds × 3 seeds of one
+dataset and ends with a summary table. The laptop already ran it with Mantis on Nonastreda
+and XJTU-SY (`PROJECT_LOG.md`, week 5); here it runs with the Gate-1 winner, and on
+Paderborn.
+
+**16.1 Take the encoder and arms from the Gate-1 winner** (after §15):
+
+```bash
+WINNER=$(python -c "import json; print(json.load(open('runs/gate1/gate1-v1/report.json'))['winner'])")
+ENCODER=${WINNER%%:*}
+ARMS=$(echo "${WINNER#*:}" | tr '+' ' ')
+echo "encoder $ENCODER, arms $ARMS"
+```
+
+The last line prints, for example, `encoder mantis, arms F` or `encoder patchtst-fold{fold},
+arms T E`. Keep `{fold}` as it is: Plan B then uses fold k's own PatchTST on fold k, as Gate 1
+did. Nonastreda has no E arm. If the winner's arms are E only, use `--arms F` for Nonastreda
+(its best arm in Gate 1).
+
+**16.2 Submit** (one GPU job per dataset, then the handcrafted reference and a photo-free
+Nonastreda run):
+
+```bash
+for dataset in nonastreda xjtu_sy paderborn; do
+  sbatch --job-name=planb-$dataset --time=02:00:00 slurm/job.sbatch \
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-$dataset --device cuda
+  sbatch --job-name=planb-$dataset-stats --time=02:00:00 slurm/job.sbatch \
+    python -m pdmfm.planb --dataset $dataset --encoder stats --arms F E --run-id planb-v1-$dataset-stats --device cuda
+done
+sbatch --job-name=planb-nonastreda-nophoto --time=02:00:00 slurm/job.sbatch \
+  python -m pdmfm.planb --dataset nonastreda --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-nonastreda-nophoto --no-photos --device cuda
+```
+
+- Keep the quotes around `"$ENCODER"`: they protect `{fold}`.
+- The handcrafted reference needs the §13 `stats` caches. Arms a dataset lacks are skipped,
+  so `--arms F E` is right for all three.
+- Up to 4 of your A100 jobs run at once; the rest wait.
+- A log shows the inputs once, then two lines per fold and seed (`<…>` are run values):
+
+  ```text
+  [planb] nonastreda mantis F: modalities ['force', 'photo']; <settings key>
+  [planb] fold 1 seed 0: train 3046, validation 428, test 767 windows
+  [train] 50 epochs in <seconds> s; best epoch <epoch> (<validation score>)
+  ```
+
+  The laptop CPU took about 70 s per fold and seed on Nonastreda; an A100 should take
+  seconds. The log ends with `[planb] done in … s -> …/runs/planb/planb-v1-nonastreda`. Paderborn prints
+  the `modalities` line once per fold: its level baseline is the healthy *training*
+  bearings of each fold, so its inputs differ by fold.
+- `bash slurm/status.sh` shows each run under `== Plan B runs` as `15 of 15` when complete.
+- The table is in `runs/planb/<run-id>/summary.md`: test units, mean ± std over folds and
+  seeds, before and after temperature scaling, each modality alone, the model without each
+  modality, and the majority, persistence and training-mean baselines. Every fold and seed
+  is in `fold<k>-seed<s>.json`, with the test predictions in `.npz` beside it.
+
+**16.3 Check Paderborn's temperature.** In `runs/planb/planb-v1-paderborn/summary.md`, look
+at the `only_slow` row: the temperature alone. On KAIST, temperature followed the recording
+session, not the fault (EDA finding 2). If temperature alone reaches a macro-F1 near the
+full model's, it probably reflects the session here too. Then run Paderborn again without it:
+
+```bash
+sbatch --job-name=planb-paderborn-noslow --time=02:00:00 slurm/job.sbatch \
+  python -m pdmfm.planb --dataset paderborn --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-paderborn-noslow --without slow --device cuda
+```
+
+Report both tables; I decide with you which one stands.
+
+**Resuming.** A job that stops at its time limit continues when you submit the same command
+again: finished folds and seeds are skipped. The same `--run-id` with other settings is
+refused (`… holds a run with other settings; use another --run-id`), so a changed option
+needs a new run id.
+
+## 17. Step 6: download
 
 Pack on Ruche (small; the login node is fine):
 
 ```bash
-cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/logs
+cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/planb runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz
@@ -511,7 +592,7 @@ up: keep the archives on the laptop.
 
 # Part C: Operating
 
-## 17. Watch, resume and cancel
+## 18. Watch, resume and cancel
 
 | Task | Command |
 |---|---|
@@ -522,15 +603,15 @@ up: keep the archives on the laptop.
 | Cancel | `scancel JOBID`; all your jobs: `scancel -u $USER` |
 | Cache progress | `python -m pdmfm.features status` |
 
-**Every step resumes.** Feature extraction saves after each chunk, and PatchTST saves after
-each epoch. A job stopped at its limit (`TIMEOUT`, `DUE TO TIME LIMIT` at the end of the log)
+**Every step resumes.** Feature extraction saves after each chunk, PatchTST saves after
+each epoch, and Plan B saves after each fold and seed. A job stopped at its limit (`TIMEOUT`, `DUE TO TIME LIMIT` at the end of the log)
 continues when you submit the same command again. For work longer than 24 h, `bash
 slurm/chain.sh PARTS [options] slurm/job.sbatch COMMAND` submits consecutive parts.
 
 **Never run two jobs on the same cache or run folder at the same time.** One command per
 encoder, as in §13, never collides.
 
-## 18. Troubleshooting
+## 19. Troubleshooting
 
 | You see | Cause | Fix |
 |---|---|---|
@@ -544,6 +625,10 @@ encoder, as in §13, never collides.
 | `no window store in …` | Store not uploaded or not built | §5, or §12 for Paderborn |
 | `… holds other features; delete it to rebuild` | A cache folder from other settings | Delete that folder under `$PDMFM_DATA_ROOT/interim/features/<dataset>/` |
 | `several … caches for …` (Gate 1) | Two caches of one encoder and arm, e.g. after a code update | Keep the newest folder (`ls -lt`) and delete the other |
+| `no <encoder> <arm> features for <dataset>` (Plan B) | The cache of that encoder, arm and dataset is missing | §13 (or §14 for PatchTST); `python -m pdmfm.features status` lists what exists |
+| `<dataset>: no <encoder> features for arms ('E',)` (Plan B, Nonastreda) | Nonastreda has no E arm | `--arms F` for Nonastreda (§16.1) |
+| `… holds a run with other settings; use another --run-id` (Plan B) | Same run id, other options or caches | A new `--run-id` |
+| `no modality ['…']; <dataset> has […]` (Plan B) | `--without` names a modality the dataset lacks | Use a name from that list |
 | `… was started with other settings or data; use a new --out` (PatchTST) | Resubmitted with other options, or the corpus changed (Paderborn added) | The original command, or `--out runs/patchtst/fold<k>-v2`. The encoder is then named `patchtst-fold<k>-v2`: extract its features with `--checkpoint runs/patchtst/fold<k>-v2/model` and use the candidate `"patchtst-fold{fold}-v2:T"` |
 | `could not extract K001.rar` | No RAR tool | §12.2 |
 | `Disk quota exceeded` | Home or workdir full | `ruche-quota`; move `~/.conda` (§3); `rm -rf ~/.cache/pip` |
@@ -556,18 +641,18 @@ srun --partition=gpu_test --gres=gpu:1 --cpus-per-task=4 --time=00:30:00 --pty b
 cd "$WORKDIR/pdmfm" && source slurm/env.sh && nvidia-smi
 ```
 
-## 19. Rules of the cluster
+## 20. Rules of the cluster
 
 - **No computing on the login nodes.** Installing, downloading, moving files, submitting jobs
   and `slurm/status.sh` are fine; tests, encoding, training and the probe go into jobs.
 - Request what you use: one GPU and 8 CPUs per job (the defaults).
 - Prefer the A100s (`gpua100`).
 - Never edit `~/.bashrc` and never run `conda init`.
-- Back up results yourself (§16).
+- Back up results yourself (§17).
 - Help: <ruche.support@universite-paris-saclay.fr>. Give your login, lab, job ID, the problem
   and the log.
 
-## 20. Cheat sheet
+## 21. Cheat sheet
 
 After the §10 block, from `$WORKDIR/pdmfm`:
 
@@ -579,4 +664,5 @@ After the §10 block, from `$WORKDIR/pdmfm`:
 | 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder stats --arms T F E` and the §13 loop |
 | 3 | The §14 loop |
 | 4 | The §15 command |
-| 5 | §16 |
+| 5 | §16.1 (winner), then the §16.2 loop |
+| 6 | §17 |

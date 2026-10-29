@@ -134,3 +134,130 @@ def nonastreda_reader(photo_root=None, seconds: float = 16.5, seed: int = 0) -> 
             recordings.append(Recording(info, channels, images, clock, targets))
             clock += seconds + PASS_GAP_S
     return FakeReader(recordings)
+
+
+def paderborn_reader(seconds: float = 2.1, seed: int = 0) -> FakeReader:
+    """The 15 source bearings, a real-damage and a held-out healthy target bearing, and the
+    out-of-space KB27, at two settings. Each class has its own vibration tone; the
+    temperature (1 Hz, a slow channel) sits 3 K higher per class above a setting offset."""
+    from pdmfm.datasets.paderborn import DAMAGE
+    from pdmfm.protocols import PADERBORN_SOURCE_FOLDS
+    from pdmfm.sources import PADERBORN_SETTINGS
+
+    rng = np.random.default_rng(seed)
+    rate = 12_000.0
+    n = int(seconds * rate)
+    bearings = [b for fold in PADERBORN_SOURCE_FOLDS for b in fold] + ["KA04", "K004", "KB27"]
+    tones = {"healthy": None, "outer_race": 1300.0, "inner_race": 1700.0, "combined": 900.0}
+    offsets = {"healthy": 0.0, "outer_race": 3.0, "inner_race": 6.0, "combined": 9.0}
+    recordings = []
+    for setting in ("N15_M07_F10", "N09_M07_F10"):
+        rpm, torque, force = PADERBORN_SETTINGS[setting]
+        for bearing in bearings:
+            label, level, _ = DAMAGE[bearing]
+            vibration = _tone(rpm / 60, rate, n) + 0.2 * rng.standard_normal(n)
+            if tones[label] is not None:
+                vibration = vibration + _tone(tones[label], rate, n, 0.8)
+            channels = {
+                "vibration": ChannelData(
+                    "vibration", "vibration", "none", "housing", rate, vibration.astype(np.float32)
+                ),
+            }
+            for name in ("current_1", "current_2"):
+                current = _tone(50.0, rate, n) + 0.1 * rng.standard_normal(n)
+                channels[name] = ChannelData(
+                    name, "current", "none", "motor_phase", rate, current.astype(np.float32)
+                )
+            base = 40.0 + (5.0 if setting.startswith("N15") else 0.0) + offsets[label]
+            temperature = base + 0.1 * np.arange(int(seconds) + 1) + rng.normal(0, 0.05)
+            channels["temperature"] = ChannelData(
+                "temperature", "slow", "none", "bearing_module", 1.0,
+                temperature.astype(np.float32),
+            )  # fmt: skip
+            condition = {"setting": setting, "rpm": float(rpm), "torque_nm": torque}
+            info = RecordingInfo(
+                "paderborn", f"{setting}_{bearing}_1", bearing, label,
+                None if level is None else f"level {level}",
+                {**condition, "radial_n": float(force)},
+            )  # fmt: skip
+            recordings.append(Recording(info, channels))
+    return FakeReader(recordings)
+
+
+# ----------------------------------------------------------------------------- caches
+
+
+class FakeImageEncoder:
+    """Stand-in for DINOv2: 5 tokens of ``dim`` per photo, a fixed function of the path."""
+
+    name = "dinov2"
+
+    def __init__(self, dim: int = 8) -> None:
+        self.dim = dim
+
+    def signature(self, kind):
+        return {"encoder": "fake-dinov2", "kind": kind, "dim": self.dim}
+
+    def encode_paths(self, paths, kind):
+        return np.stack([_vector(f"{kind}:{p}", (5, self.dim)) for p in paths]).astype(np.float32)
+
+
+class FakeTextEncoder:
+    """Stand-in for Qwen3-Embedding: unit vectors, a fixed function of the sentence."""
+
+    name = "qwen3_embedding"
+
+    def __init__(self, dim: int = 16) -> None:
+        self.dim = dim
+
+    def signature(self):
+        return {"encoder": "fake-qwen3", "dim": self.dim}
+
+    def encode(self, sentences):
+        z = np.stack([_vector(s, (self.dim,)) for s in sentences]).astype(np.float32)
+        return z / np.linalg.norm(z, axis=1, keepdims=True)
+
+
+def _vector(text: str, shape: tuple[int, ...]) -> np.ndarray:
+    import hashlib
+
+    seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little")
+    return np.random.default_rng(seed).standard_normal(shape)
+
+
+def build_planb_root(root, datasets=("nonastreda", "xjtu_sy", "cwru", "paderborn")):
+    """Window stores, stats features (arms T, F and, for bearings, E), photo caches and text
+    prototypes under ``root`` laid out as a data root (``interim/windows``,
+    ``interim/features``). Call with ``PDMFM_DATA_ROOT`` set to ``root``."""
+    from pdmfm import features, windows
+    from pdmfm.encoders import StatsEncoder
+
+    def quiet(*_):
+        pass
+
+    readers = {
+        "nonastreda": lambda: nonastreda_reader(photo_root=root / "raw" / "nonastreda"),
+        "xjtu_sy": lambda: xjtu_reader(30),
+        "cwru": cwru_reader,
+        "paderborn": paderborn_reader,
+    }
+    cache = features.FeatureStore(root / "interim" / "features")
+    for name in datasets:
+        store = windows.build(name, reader=readers[name](), log=quiet)
+        for arm in ("T", "F", "E") if store.spec.bearing else ("T", "F"):
+            cache.extract(store, StatsEncoder(), arm, log=quiet)
+        if store.spec.image_kinds:
+            attached = {
+                kind: sorted(p for p in store.manifest[f"image_{kind}"].unique() if p)
+                for kind in store.spec.image_kinds
+            }
+            # Every kind gets a cache, as on the real data; one photo is never attached.
+            attached = {k: v + [f"raw/{name}/unattached-{k}.png"] for k, v in attached.items()}
+            original = features.image_paths
+            features.image_paths = lambda dataset, found=attached: found
+            try:
+                features.extract_images(name, FakeImageEncoder(), root=cache.root, log=quiet)
+            finally:
+                features.image_paths = original
+    features.extract_texts(FakeTextEncoder(), list(datasets), root=cache.root, log=quiet)
+    return root
