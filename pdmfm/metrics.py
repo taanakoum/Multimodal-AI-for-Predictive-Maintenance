@@ -4,11 +4,15 @@
   the top-class probability), multi-class Brier score and NLL. ``temperature_scale`` fits
   one temperature on validation probabilities (p ** (1/T), renormalized), the plan's
   post-hoc calibration.
-* Regression: RMSE, MAE, coverage and mean width of the 90 % predictive interval; the PHM
-  2012 score for RUL on snapshots past the first prediction time.
+* Regression: RMSE, MAE, Student-t NLL, coverage and mean width of the 90 % predictive
+  interval; the PHM 2012 score for RUL. ``interval_scale`` fits one factor on the
+  predictive scale on validation targets (decision D, 2026-10-29), as temperature scaling
+  does for the classes.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 from scipy import optimize, stats
@@ -16,20 +20,25 @@ from scipy import optimize, stats
 EPS = 1e-12
 
 
-def classification(y: np.ndarray, probs: np.ndarray, n_classes: int | None = None) -> dict:
-    """Metrics of predicted class probabilities ``probs`` (n, K) against labels ``y`` (n,)."""
+def classification(y: np.ndarray, probs: np.ndarray) -> dict:
+    """Metrics of predicted class probabilities ``probs`` (n, K) against labels ``y`` (n,).
+    Macro-F1 and balanced accuracy average over the classes present in ``y`` (plan: a fold
+    without a healthy test bearing is not scored on the healthy class); predicting an
+    absent class still costs the recall of the true one."""
     from sklearn.metrics import balanced_accuracy_score, f1_score
 
     y = np.asarray(y)
     probs = np.asarray(probs, dtype=float)
-    k = n_classes or probs.shape[1]
     predicted = probs.argmax(1)
-    labels = list(range(k))
+    present = np.unique(y)
+    with warnings.catch_warnings():  # "y_pred contains classes not in y_true": intended
+        warnings.simplefilter("ignore", UserWarning)
+        balanced = balanced_accuracy_score(y, predicted)
     return {
         "accuracy": float((predicted == y).mean()),
-        "balanced_accuracy": float(balanced_accuracy_score(y, predicted)),
+        "balanced_accuracy": float(balanced),
         "macro_f1": float(
-            f1_score(y, predicted, labels=labels, average="macro", zero_division=0.0)  # pyright: ignore[reportArgumentType]
+            f1_score(y, predicted, labels=present, average="macro", zero_division=0.0)  # pyright: ignore[reportArgumentType]
         ),
         "ece": ece(y, probs),
         "brier": brier(y, probs),
@@ -81,19 +90,35 @@ def temperature_scale(y_val: np.ndarray, probs_val: np.ndarray) -> float:
 def regression(
     y: np.ndarray, mean: np.ndarray, dof: np.ndarray, scale: np.ndarray, level: float = 0.9
 ) -> dict:
-    """RMSE, MAE and the coverage and mean width of the central ``level`` Student-t interval."""
+    """RMSE, MAE, the Student-t NLL, and the coverage and mean width of the central
+    ``level`` Student-t interval."""
     y, mean = np.asarray(y, dtype=float), np.asarray(mean, dtype=float)
-    half = stats.t.ppf(0.5 + level / 2, np.asarray(dof, dtype=float)) * np.asarray(
-        scale, dtype=float
-    )
+    dof, scale = np.asarray(dof, dtype=float), np.asarray(scale, dtype=float)
+    half = stats.t.ppf(0.5 + level / 2, dof) * scale
     inside = np.abs(y - mean) <= half
     return {
         "rmse": float(np.sqrt(np.mean((y - mean) ** 2))),
         "mae": float(np.mean(np.abs(y - mean))),
+        "nll": student_t_nll(y, mean, dof, scale),
         f"coverage_{int(level * 100)}": float(inside.mean()),
         f"width_{int(level * 100)}": float(np.mean(2 * half)),
         "n": int(len(y)),
     }
+
+
+def student_t_nll(y, mean, dof, scale) -> float:
+    return float(-np.mean(stats.t.logpdf(y, dof, loc=mean, scale=scale)))
+
+
+def interval_scale(y_val, mean_val, dof_val, scale_val) -> float:
+    """The factor in [0.05, 20] on the predictive scale that minimizes the validation
+    Student-t NLL: the regression counterpart of temperature scaling (decision D)."""
+    result = optimize.minimize_scalar(
+        lambda log_s: student_t_nll(y_val, mean_val, dof_val, scale_val * np.exp(log_s)),
+        bounds=(np.log(0.05), np.log(20.0)),
+        method="bounded",
+    )
+    return float(np.exp(result.x))
 
 
 def phm2012_score(actual: np.ndarray, predicted: np.ndarray) -> float:

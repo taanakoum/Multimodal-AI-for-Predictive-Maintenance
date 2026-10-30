@@ -21,6 +21,19 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   with none takes the worst rank on that task.
 > - Nonastreda passes are separated by a photo pause on each tool's clock, so every window of
 >   a pass, its first included, receives the previous pass's photos.
+> - The `Sample` record below is realized as the window store (`pdmfm.windows`): one
+>   manifest row per window, with signals, levels and slow summaries as arrays.
+>   `pdmfm.schema` keeps only `ImageItem` and the as-of join.
+> - Level tokens (tested 2026-10-29, after the code audit) stay as planned: four
+>   descriptors relative to the healthy baseline. Two additions were tried on the Nonastreda
+>   inner-validation tools and remain options only. The force channels' window mean
+>   (`--force-mean`; Fx and Fy means follow flank wear, Spearman ±0.67, not the recording
+>   block) lowered the force expert (macro-F1 0.54 against 0.66). Absolute descriptors
+>   (`--levels both`, which the EDA suggested) made no difference. Level and slow
+>   descriptors are standardized with training-row statistics, which is neutral. Slow
+>   channels are always relative (absolute temperature identifies the session, EDA F3).
+> - Wear and RUL intervals are calibrated like the classes: one scale factor on the
+>   predictive scale, fitted by NLL on the inner-validation units (decision D, 2026-10-29).
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or

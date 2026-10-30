@@ -6,12 +6,12 @@ This is the running record of tasks, progress, findings, implementations and dec
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-4 of the plan (weeks 2-5) implemented and tested. Stage 4 (Plan B: per-modality evidential experts, Dempster's rule and MoNIG) run locally on Nonastreda and XJTU-SY (week 5). The GPU part and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16) |
+| Phase | Stages 1-4 of the plan (weeks 2-5) implemented, audited and tested. Stage 4 (Plan B: per-modality evidential experts, Dempster's rule and MoNIG) run locally on Nonastreda and XJTU-SY. The GPU part and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: Gate 2, the fusion search |
 | Tests | See "Week 5" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (manual download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
-| Needs you | `docs/USER_ACTIONS.md`: commit and push week 5; run the Ruche runbook (now with Plan B); PHM 2010; 4 decisions |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push week 5; run the Ruche runbook (now with Plan B); PHM 2010. Decisions A-D taken |
 
 ## Week 1 — setup, downloads and verification
 
@@ -360,7 +360,11 @@ and the final Gate-1 encoder run on Ruche (runbook §16).
 
 ### Local runs (CPU, 5 outer folds × 3 seeds, test units, mean ± std)
 
-All runs used AdamW 1e-3, 50 epochs and d = 256; results are in `runs/planb/<run-id>/`.
+**Superseded** by "Results after the audit" below. These runs predate the force-mean level
+descriptor, the descriptor standardization, decision D and the macro-F1 fix; they are kept
+in `runs/planb-superseded-2026-10-29/` for the record.
+
+All runs used AdamW 1e-3, 50 epochs and d = 256.
 
 **Nonastreda** (leave-two-tools-out; a bag is a pass; 3 wear classes and flank wear in µm):
 
@@ -436,3 +440,112 @@ Two operational notes:
 | 2026-10-29 | Local Plan B with Mantis F (the preliminary Gate-1 winner) and the handcrafted reference; the final encoder runs on Ruche (§16) | Gate 1 is not final until the GPU caches and Paderborn exist |
 | 2026-10-29 | Plan B's RAM guard at 1 GB | Measured peak 0.6 GB; the 2 GB guess refused runs on an idle CPU |
 | Open | Calibrated regression intervals (decision D in `docs/USER_ACTIONS.md`) | Coverage 0.69-0.79 for a 90 % interval |
+
+## Week 5, continued (2026-10-29): decisions, code audit and cleanup
+
+### Your decisions
+
+| | Decision |
+| --- | --- |
+| A | Milling transfer target: PHM 2010 if it can be obtained; otherwise NASA milling, with its limits stated in the report |
+| B | Paderborn through Ruche (runbook §12) |
+| C | CWRU for pretraining and Gate 1 only, never as evidence |
+| D | Calibrated wear and RUL intervals: implemented (`metrics.interval_scale`; `combined_calibrated` rows in every regression table) |
+
+### Audit of the whole codebase against the plan
+
+Every module, script and job file was read against the plan and the EDA report. Where a
+question could be settled on the real data, it was.
+
+| # | Finding | Weight | Evidence | Action |
+| --- | --- | --- | --- | --- |
+| 1 | **The static cutting force never reached the model.** Level descriptors, the F arm and the encoders all remove the window mean, and Plan B used only baseline-relative levels, although the EDA recommended absolute Nonastreda levels | High | Per pass: Fx and Fy means follow flank wear (Spearman +0.67 and −0.66; partial correlation given the block +0.68 and −0.66) and not the recording block (partial given wear −0.11 and +0.02). Fz follows the block (−0.74), not wear | Tested, and the plan's form kept. Both additions exist as options: the force mean (`--force-mean`) and absolute descriptors (`--levels both`). On the inner-validation tools the force mean *lowered* the force expert (macro-F1 0.54 against 0.66, paired p = 0.04) and absolute descriptors made no difference (see "Results after the audit"). Level and slow descriptors are now standardized with training-row statistics (neutral: 0.657 against 0.663) |
+| 2 | **Macro-F1 averaged over all K classes**; the plan scores the classes present in each fold | Medium | Paderborn folds 4-5 have no healthy test bearing, so their macro-F1 was capped at 2/3. All Nonastreda folds hold all three classes, so no reported number changes | Fixed (macro-F1 and balanced accuracy over the classes present) |
+| 3 | **KAIST's level baseline was the normal recording at the same load.** At stage 8 the 4 Nm normal windows are test windows; the plan uses the support set's normal windows | Medium (stage 8) | Plan, dataset table | KAIST now raises until stage 8 passes its support set |
+| 4 | **The Ruche runbook uploaded no photo tokens or prototypes**, so Plan B on Ruche would have stopped (the raw photos never go to Ruche) | High (operational) | `_photo_modality`, `_prototypes` | Fixed: the §1 archive carries `features/images` and `features/texts`; §12 embeds Paderborn's contexts once its store exists |
+| 5 | **Manifest metadata identifies classes and targets** (CWRU `meta_rate_hz` 48 kHz only for normal files; `rpm_source`; XJTU-SY `meta_lifetime_min`, `meta_failure`) | Low (no input reads them) | Readers | Guard test: scrambling every `meta_*` column changes no model input |
+| 6 | **Class prototypes are close in Qwen space.** Off-diagonal cosine up to 0.94 (Nonastreda), 0.98 (CWRU, severities), 0.99 (Paderborn, KAIST) | Medium for the zero-shot claim (innovation 3) | Prototype Gram matrices | Supervised heads compensate with a learnable scale. Before any zero-shot claim, the text-anchoring stage needs the plan's learned text projection W_t, and centred prototypes should be compared |
+| 7 | Nonastreda photo ages are synthetic: the 60 s pause is nominal, and the real gaps across run boundaries are unknown | Low | Reader | Noted: the age token carries only the window's position in the pass |
+| 8 | The supervised from-scratch PatchTST baseline (plan: every target table, and the Gate-1 reference) is not implemented | Medium (report) | Search of the code | Remaining work, before the result tables |
+| 9 | Paired Wilcoxon tests, bootstrap confidence intervals and Holm correction are not implemented | Medium (report) | Same | Remaining work (report stage) |
+| 10 | UniFault: weights downloaded, no wrapper (plan priority "Could") | Low | Week-1 checklist | Remaining, optional |
+| 11 | Windows never overlap; the plan wanted 50 % overlap for CWRU training | Low (CWRU is pretraining only) | `windows.build` | Noted |
+| 12 | AST normalizes with AudioSet statistics; vibration in g sits outside the audio range | Low (AST arm only) | `ASTEncoder` | Noted; Gate 1 judges the arm as it is |
+| 13 | PatchTST's held-out loss uses random segments that can share windows with training | Low (checkpoint choice of a self-supervised model only) | `patchtst.pretrain` | Noted |
+| 14 | **Decision D's interval scale is unstable when the inner validation holds few units.** It is fitted on 3 validation bearings (XJTU-SY) or 1 tool (Nonastreda) | Medium | XJTU-SY fold 5: validation coverage 0.97, so s = 0.20, and test coverage fell from 0.76 to 0.30. Nonastreda folds 1-2: coverage 0.64/0.44 rose to 0.85/0.96 | Both rows stay in every table. Proposed for Gate 2: fit the scale on cross-fitted predictions of the training units (out-of-fold within the training part, 7-9 units instead of 1-3), or shrink it towards 1 |
+
+Checked and found consistent with the plan: unit-level splits and pretraining masks, the
+as-of join and the previous-pass photos, stale-store and stale-cache refusal, the Gate-1
+rule, evidential losses and combination rules, RUL labels, and the SLURM jobs.
+
+### Removed (redundant or superseded)
+
+| Code | Why |
+| --- | --- |
+| `schema.Sample`, `ChannelWindow`, `item_ages`, `AXES`, `PLACEMENTS` | The window store (`pdmfm.windows`) realizes the sample format; only the tests used them. `schema.py` keeps `ImageItem` and the as-of join |
+| `preprocess.healthy_baseline`, `relative_to_baseline` | Superseded by the grouped, fold-aware baselines of `pdmfm.model.inputs` |
+| `arms.input_length` | Never called |
+| `fetch.download_file` | A one-line wrapper of `obtain_file`, used only by tests |
+| `scripts/week1/` (encoder smoke test, throughput, dataset inspection) | Superseded: `pdmfm.encoders` and its `weights` tests, the feature-cache progress lines, the readers with `test_real_data.py` and the EDA. Their results stay in the week-1 section of this log |
+
+Kept on purpose, although unused today: the split helpers of stages 7-8 (`few_shot`,
+`kaist_target`, `paderborn_target`, `phm2010_fold`, `nonastreda_loto`),
+`defect_frequencies` (physics score) and `nig_uncertainty` (explanation cards).
+
+### Results after the audit (CPU, 5 outer folds × 3 seeds, test units, bag level, mean ± std)
+
+Final defaults: Mantis F tokens (the preliminary Gate-1 winner), the plan's four relative
+level descriptors standardized with training rows, temperature and interval calibration on
+the inner-validation units. Runs are in `runs/planb/`; the pre-audit runs are in
+`runs/planb-superseded-2026-10-29/`.
+
+**Nonastreda** (3 wear classes and flank wear; two held-out tools per fold):
+
+| Run | Macro-F1 | Balanced accuracy | Window ECE, raw → calibrated | Wear RMSE (µm) | 90 % coverage, raw → calibrated |
+| --- | --- | --- | --- | --- | --- |
+| **Mantis F + photos** (`planb-nona-mantis-F`) | **0.774 ± 0.066** | 0.775 ± 0.059 | 0.222 → 0.113 | 23.8 ± 10.6 | 0.64 → 0.85 |
+| Handcrafted F + photos (`planb-nona-stats-F`) | 0.750 ± 0.085 | 0.757 ± 0.072 | 0.219 → 0.122 | 24.6 ± 10.6 | 0.67 → 0.85 |
+| Mantis F, no photos (`planb-nona-mantis-F-nophoto`) | 0.497 ± 0.129 | 0.582 ± 0.109 | 0.158 → 0.155 | 33.4 ± 9.8 | 0.72 → 0.83 |
+| Ablation: + force mean (`…-forcemean`) | 0.781 ± 0.085 | 0.783 ± 0.076 | 0.243 → 0.115 | 23.0 ± 11.1 | 0.73 → 0.85 |
+| Ablation: + force mean, no photos (`…-nophoto-forcemean`) | 0.446 ± 0.144 | 0.541 ± 0.118 | 0.158 → 0.182 | 34.0 ± 11.1 | 0.63 → 0.82 |
+| Ablation: + force mean, absolute and relative levels (`…-both-forcemean`) | 0.763 ± 0.111 | 0.770 ± 0.090 | 0.250 → 0.134 | 25.5 ± 11.4 | 0.73 → 0.86 |
+| Persistence (previous pass's label and wear) | 0.756 ± 0.106 | 0.755 ± 0.101 | – | **20.6 ± 9.4** | – |
+| Majority class / training mean | 0.158 ± 0.041 | 0.333 | – | 44.6 ± 11.0 | – |
+
+Inside the main model: photo alone 0.786, force alone 0.413, without the photo 0.413;
+mean trust 0.34 (force) and 0.50 (photo); conflict 0.08; fitted temperature 0.45 (the
+evidential head is underconfident); 1.3 M parameters.
+
+**XJTU-SY** (normalized RUL; one bearing per condition held out per fold):
+
+| Run | RMSE | MAE | 90 % coverage, raw → calibrated | PHM 2012 score |
+| --- | --- | --- | --- | --- |
+| **Mantis F + E** (`planb-xjtu-mantis-FE`) | **0.166 ± 0.081** | 0.099 ± 0.067 | 0.81 → 0.72 | 0.663 |
+| Handcrafted F + E (`planb-xjtu-stats-FE`) | 0.176 ± 0.089 | 0.103 ± 0.071 | 0.78 → 0.75 | 0.675 |
+| Training mean | 0.300 ± 0.073 | 0.240 ± 0.046 | – | – |
+
+Reading (paired tests over the 15 fold-seed pairs; Wilcoxon):
+1. **Classes.** Plan B beats persistence on 10 of 15 fold-seeds (+0.019 macro-F1), which is
+   not significant (p = 0.39). The previous pass's photo carries the prediction, as before.
+2. **Wear.** Persistence is significantly better than Plan B (20.6 against 23.8 µm; the model
+   wins 3 of 15, p = 0.002). The previous inspection is a strong predictor that Plan B does
+   not see as an input.
+3. **Missing modality.** Without the photo, the model falls to the force expert (0.41). A
+   force-only model trained alone reaches 0.50: Gate 2's modality dropout is needed.
+4. **Calibration.** Temperature scaling halves the class ECE (0.22 to 0.11). The interval
+   scale (decision D) brings Nonastreda's wear coverage from 0.64 to 0.85 and lowers its NLL
+   (6.37 to 4.63), but it worsens XJTU-SY (0.81 to 0.72): audit finding 14.
+5. **Encoders.** Mantis is slightly ahead of the handcrafted reference on both datasets
+   (0.774 against 0.750; 0.166 against 0.176), within one standard deviation; the preliminary
+   Gate 1 found the opposite on XJTU-SY. The final Gate 1 decides.
+6. **Level tokens.** The plan's relative form is kept. The force mean and the absolute
+   descriptors did not help on the inner-validation tools (finding 1); test units agree.
+
+### Verification after the audit
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | 315 passed, 25 skipped (5 network, 4 Paderborn/PHM 2010 acceptance, 16 Linux-only SLURM tests) |
+| CI reproduced in fresh Python 3.11 and 3.12 environments | 290 passed, 46 skipped on both; coverage 85 %; pyright 0 errors |
+| ruff, pre-commit on every new, changed and removed file | Clean; all hooks pass |
+| New or changed tests in this pass | Decision D (interval scale recovers a known factor; calibrated widths are the raw ones times the factor); classes present in macro-F1; level modes and the force mean; standardization with training rows only; KAIST refusal; the `meta_*` guard. `test_schema` reduced to the as-of join |

@@ -8,8 +8,8 @@
 * Encoder inputs per window: :func:`time_segments` (T arm), :func:`log_spectrum` (F arm),
   :func:`envelope_order_spectrum` (E arm, bearings only).
 * :func:`level_descriptors` and :func:`slow_summary`: what per-input normalized encoders
-  cannot see (absolute level, DC trend); :func:`relative_to_baseline` expresses them against
-  the unit's healthy reference.
+  cannot see (absolute level, DC trend); :mod:`pdmfm.model.inputs` expresses them against
+  each unit's healthy reference.
 * :func:`dominant_frequency`: tachless shaft-speed or line-frequency estimate.
 * :func:`defect_frequencies`, :func:`first_prediction_time`, :func:`label_fpt`,
   :func:`normalized_rul`.
@@ -241,19 +241,6 @@ def slow_summary(window: np.ndarray, rate_hz: float) -> np.ndarray:
     t = np.arange(len(x)) / rate_hz
     slope = np.polyfit(t, x, 1)[0] if len(x) > 1 else 0.0
     return np.array([x.mean(), slope], dtype=np.float32)
-
-
-def healthy_baseline(descriptors: np.ndarray) -> np.ndarray:
-    """Median of descriptor rows from healthy (reference) windows."""
-    descriptors = np.atleast_2d(descriptors)
-    if len(descriptors) == 0:
-        raise ValueError("a baseline needs at least one healthy window")
-    return np.median(descriptors, axis=0).astype(np.float32)
-
-
-def relative_to_baseline(descriptors: np.ndarray, baseline: np.ndarray) -> np.ndarray:
-    """Descriptors minus the healthy baseline (log quantities become log ratios)."""
-    return (np.asarray(descriptors) - baseline).astype(np.float32)
 
 
 # ----------------------------------------------------------------------------- physics and RUL

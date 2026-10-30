@@ -61,7 +61,10 @@ def test_cached_tokens_are_copied_unchanged(root):
 def test_no_fz_level_token_on_nonastreda(root):
     force = assemble(root, "nonastreda", ("T", "F")).modalities["force"]
     assert force.level_channels.tolist() == [0, 1]  # fx, fy; Fz drifts by block
+    # 4 relative descriptors (default); the force mean is an opt-in ablation.
     assert force.levels.shape == (len(force.present), 2, 4)
+    with_mean = assemble(root, "nonastreda", ("F",), force_mean=True).modalities["force"]
+    assert with_mean.levels.shape == (len(force.present), 2, 5)
 
 
 def test_levels_are_relative_to_each_tools_first_pass(root):
@@ -73,7 +76,8 @@ def test_levels_are_relative_to_each_tools_first_pass(root):
     for unit in np.unique(keys):
         rows = (keys == unit) & reference
         np.testing.assert_allclose(np.median(levels[rows], axis=0), 0.0, atol=1e-5)
-        expected = s.levels[keys == unit] - np.median(s.levels[rows], axis=0)
+        absolute = I.absolute_levels(s)
+        expected = absolute[keys == unit] - np.median(absolute[rows], axis=0)
         np.testing.assert_allclose(levels[keys == unit], expected, rtol=1e-6)
     # The synthetic force level rises with wear, so later passes sit above the baseline.
     mean_level = levels[:, 0, :].mean(-1)
@@ -208,7 +212,10 @@ def test_the_description_names_the_inputs(root):
     inputs = assemble(root, "nonastreda", ("T", "F"))
     d = inputs.description
     assert d["window_store"] == store(root, "nonastreda").key
-    assert d["modalities"]["force"] == {"tokens": 15, "dim": StatsEncoder.dim, "levels": 2}
+    force = d["modalities"]["force"]
+    assert (force["tokens"], force["dim"], force["levels"]) == (15, StatsEncoder.dim, 2)
+    assert force["level_features"] == I.level_names("force", "relative")
+    assert d["levels"] == "relative"
     assert d["arms"] == ["T", "F"] and d["classes"] == inputs.classes
 
 
@@ -288,3 +295,90 @@ def test_a_missing_slow_channel_is_masked(root):
     assert not slow.token_present[:5].any() and not slow.present[:5].any()
     assert slow.present[5:].all()
     np.testing.assert_array_equal(slow.tokens[:5], 0.0)
+
+
+# ----------------------------------------------------------------------------- levels
+
+
+def test_window_means_are_the_stored_window_means(root):
+    s = store(root, "nonastreda")
+    means = I.window_means(s)
+    np.testing.assert_allclose(means, np.asarray(s.signals).mean(axis=2), rtol=1e-5)
+    np.testing.assert_array_equal(I.absolute_levels(s), s.levels)
+    absolute = I.absolute_levels(s, with_mean=True)
+    np.testing.assert_array_equal(absolute[:, :, :4], s.levels)
+    np.testing.assert_array_equal(absolute[:, :, 4], means)
+
+
+def test_level_modes_and_names(root):
+    by_mode = {
+        mode: assemble(
+            root, "nonastreda", ("F",), photos=False, levels=mode, force_mean=True
+        ).modalities["force"]
+        for mode in I.LEVEL_MODES
+    }
+    s = store(root, "nonastreda")
+    absolute, relative = I.absolute_levels(s, True), I.relative_levels(s, with_mean=True)
+    np.testing.assert_allclose(by_mode["absolute"].levels, absolute[:, :2])
+    np.testing.assert_allclose(by_mode["relative"].levels, relative[:, :2])
+    np.testing.assert_allclose(
+        by_mode["both"].levels,
+        np.concatenate([by_mode["absolute"].levels, by_mode["relative"].levels], axis=2),
+    )
+    assert I.level_names("force", "relative", force_mean=True) == [
+        "relative_log10_rms", "relative_log10_peak", "relative_kurtosis", "relative_crest",
+        "relative_mean",
+    ]  # fmt: skip
+    with pytest.raises(ValueError, match="levels must be one of"):
+        assemble(root, "nonastreda", ("F",), levels="raw")
+
+
+def test_only_force_channels_get_a_mean_descriptor(root):
+    vibration = assemble(root, "xjtu_sy", ("F",), levels="both", force_mean=True).modalities[
+        "vibration"
+    ]
+    assert vibration.levels.shape[-1] == 8  # 4 absolute + 4 relative, no window mean
+    assert I.level_names("vibration", "both", force_mean=True)[-1] == "relative_crest"
+
+
+def test_the_synthetic_force_mean_tracks_wear(root):
+    """The synthetic force level rises with the wear class: the relative mean descriptor of
+    Fx is ordered sharp < used < dulled."""
+    s = store(root, "nonastreda")
+    relative_mean = I.relative_levels(s, with_mean=True)[:, 0, 4]
+    by_class = pd.Series(relative_mean).groupby(s.manifest["class_key"].to_numpy()).mean()
+    assert by_class["sharp"] < by_class["used"] < by_class["dulled"]
+
+
+def test_kaist_has_no_baseline_rule_until_stage_8(root):
+    manifest = pd.DataFrame({"unit": ["a"], "class_key": ["normal"], "load_nm": [0]})
+    with pytest.raises(NotImplementedError, match="kaist"):
+        I.baseline_groups("kaist", manifest)
+
+
+def test_manifest_metadata_never_reaches_the_inputs(root, monkeypatch):
+    """Columns such as CWRU's meta_rate_hz (48 kHz normal files) or XJTU-SY's
+    meta_lifetime_min identify classes or targets; scrambling every meta_* column must leave
+    every model input unchanged."""
+    original = WindowStore.open
+
+    def scrambled(dataset, root_=None):
+        s = original(dataset, root_)
+        rng = np.random.default_rng(0)
+        for column in [c for c in s.manifest.columns if c.startswith("meta_")]:
+            if column in ("meta_t_start", "meta_minute"):  # baselines and persistence order
+                continue
+            s.manifest[column] = rng.permutation(s.manifest[column].to_numpy())
+        return s
+
+    for dataset, arm_list in (("nonastreda", ("T", "F")), ("xjtu_sy", ("F", "E"))):
+        before = assemble(root, dataset, arm_list)
+        monkeypatch.setattr(WindowStore, "open", staticmethod(scrambled))
+        after = assemble(root, dataset, arm_list)
+        monkeypatch.setattr(WindowStore, "open", original)
+        for name, modality in before.modalities.items():
+            again = after.modalities[name]
+            np.testing.assert_array_equal(modality.tokens, again.tokens)
+            np.testing.assert_array_equal(modality.present, again.present)
+            if modality.levels is not None:
+                np.testing.assert_array_equal(modality.levels, again.levels)

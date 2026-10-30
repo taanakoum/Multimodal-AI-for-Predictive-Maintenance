@@ -156,9 +156,7 @@ def selection_score(
             keys, evidence = bag_mean(pred["combined"][labelled], bags[labelled])
             _, y = bag_mean(inputs.y_class[rows][labelled].astype(float), bags[labelled])
             probs = losses.expected_probability(torch.from_numpy(evidence)).numpy()
-            parts.append(
-                M.classification(y.round().astype(int), probs, len(inputs.classes))["macro_f1"]
-            )
+            parts.append(M.classification(y.round().astype(int), probs)["macro_f1"])
     if "fused_nig" in pred and inputs.y_reg is not None:
         y = inputs.y_reg[rows]
         labelled = np.isfinite(y)
@@ -182,7 +180,7 @@ def fit(
     device = torch.device(cfg.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
-    model = LateEvidential(inputs, d=cfg.d, dropout=cfg.dropout).to(device)
+    model = LateEvidential(inputs, d=cfg.d, dropout=cfg.dropout, train_rows=train_rows).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     y_mean, y_std = 0.0, 1.0
     if inputs.y_reg is not None:

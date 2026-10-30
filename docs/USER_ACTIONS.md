@@ -10,31 +10,30 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the Plan B phase (week 5); check that CI is green | Ruche clones the repository from GitHub | 5 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), now with step 5: Plan B (§16) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B with the Gate-1 winner and on Paderborn | about 2-3 h of your time over a few days, the rest is queue and compute |
+| 1 | Commit and push the audit pass (on top of `965d479`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), now with step 5: Plan B (§16). The §1 archive now also carries the photo tokens and text prototypes | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B with the Gate-1 winner and on Paderborn | about 2-3 h of your time over a few days, the rest is queue and compute |
 | 3 | Obtain PHM 2010 (manual download) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
-| 4 | Four decisions (section 4) | Scope of the next weeks | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80` | — | — |
+| — | Decisions A-D taken (section 4) | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479` | — | — |
 
 ---
 
-## 1. Commit and push the Plan B phase
+## 1. Commit and push the audit pass
 
-Commits `1a53d64` and `b837e80` hold stages 1-3. This phase adds stage 4 (Plan B) and is not
-committed. Everything is ready for you to review and commit:
+`965d479` ("Per Modality Expert Implementation") holds Plan B. This pass (decision D, the audit
+fixes, the cleanup and the docs) is not committed:
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb                  # new: pdmfm/losses.py, metrics.py, model/, train.py, planb.py, 4 test files
-git diff --stat                 # changed: docs, README, PROJECT_LOG, slurm/status.sh, tests
-git add -A
-git commit -m "Stage 4: Plan B baseline"
+git status -sb                  # modified modules, tests and docs; scripts/week1/ deleted
+git add -A                      # also stages the deletion of scripts/week1/ (superseded; PROJECT_LOG)
+git commit -m "Audit: interval calibration, metric and baseline fixes, cleanup"
 git push
 ```
 
 `runs/` is git-ignored, so the local Plan B results stay out of the commit. The pre-commit
-hook runs ruff on the commit. Then open the repository's **Actions** tab and check that CI
-is green (lint, 4 test legs, advisory pyright). If a job is red, paste its log.
+hook runs ruff. Then open the repository's **Actions** tab and check that CI is green (lint,
+4 test legs, advisory pyright). If a job is red, paste its log.
 
 ---
 
@@ -123,21 +122,16 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
 
 ---
 
-## 4. Decisions
+## 4. Decisions (taken 2026-10-29)
 
-- **A. Milling transfer target.** PHM 2010 if step 3 succeeds; otherwise NASA milling, with
-  the report stating its limits; or drop milling transfer and keep Nonastreda in-domain only.
-- **B. Paderborn route.** Ruche (runbook §12) or a VPN.
-- **C. CWRU's role.** The EDA shows a 10-class handcrafted floor of 1.0 under the cross-load
-  split, plus a recorder artifact that separates normal from fault on its own
-  (`docs/EDA_REPORT.md`). My recommendation is to use CWRU for pretraining and Gate 1 only,
-  never as evidence. Gate 1 keeps it as one of its four tasks, as the plan fixes.
-- **D. Calibrated wear and RUL intervals.** Plan B's 90 % NIG intervals are too narrow on the
-  local runs (`PROJECT_LOG.md`, week 5). The plan calibrates only the classes (temperature
-  scaling). The regression counterpart is one scale factor on the interval, fitted on the
-  same inner-validation units and reported next to the raw coverage. It adds about 20 lines
-  and one row per table. My recommendation is yes, before Gate 2, so every fusion candidate
-  is compared with calibrated intervals too.
+| | Decision | What follows from it |
+|---|---|---|
+| A | **Milling transfer target:** PHM 2010 if step 3 succeeds; otherwise NASA milling, with the report stating its limits | Stage 8 uses PHM 2010; if it cannot be obtained, NASA milling (250 Hz, RMS-processed signals, 16 cases) with its limits written into the report |
+| B | **Paderborn through Ruche** | Runbook §12; the VPN route is only the fallback if Ruche cannot reach the host |
+| C | **CWRU for pretraining and Gate 1 only**, never as evidence | No CWRU row in any result table; it stays one of Gate 1's four tasks and in the PatchTST corpus |
+| D | **Calibrated wear and RUL intervals** | Implemented: one scale factor on the predictive interval, fitted by NLL on the inner-validation units; every regression table shows `combined_calibrated` next to `combined` |
+
+No decision is open.
 
 ---
 
@@ -151,6 +145,16 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
 
 If Gate 2 finds no candidate better than late aggregation on the validation units, Plan B
 becomes the model (plan, Gate 2), and weeks 8-9 pretrain its per-modality adapters instead.
+
+Carried into Gate 2 from the audit (`PROJECT_LOG.md`, week 5):
+- **A steadier interval calibration.** Fit decision D's scale on cross-fitted predictions of
+  the training units (7-9 units instead of 1-3), because the current scale worsened XJTU-SY
+  coverage.
+- **The supervised from-scratch PatchTST baseline** that the plan lists for every table.
+- **Paired tests over fold × seed** (Wilcoxon, bootstrap confidence intervals, Holm
+  correction) in the summaries.
+- **The text projection W_t before any zero-shot claim.** Class prototypes are nearly
+  parallel in Qwen space.
 
 ---
 

@@ -11,7 +11,7 @@ from pdmfm import metrics as M
 
 def test_perfect_one_hot_predictions():
     y = np.array([0, 1, 2, 1])
-    result = M.classification(y, np.eye(3)[y], 3)
+    result = M.classification(y, np.eye(3)[y])
     assert result["accuracy"] == result["balanced_accuracy"] == result["macro_f1"] == 1.0
     assert result["ece"] == pytest.approx(0.0) and result["brier"] == pytest.approx(0.0)
     assert result["nll"] == pytest.approx(0.0, abs=1e-9) and result["n"] == 4
@@ -40,7 +40,7 @@ def test_brier_and_nll_by_hand():
 
 def test_macro_f1_counts_classes_never_predicted():
     y = np.array([0, 1, 2])
-    result = M.classification(y, np.eye(3)[[0, 0, 0]], 3)
+    result = M.classification(y, np.eye(3)[[0, 0, 0]])
     assert result["macro_f1"] == pytest.approx((0.5 + 0 + 0) / 3)
 
 
@@ -108,3 +108,46 @@ def test_phm2012_score_known_values():
 def test_phm2012_score_skips_failed_points():
     assert M.phm2012_score(np.array([0.0, 50.0]), np.array([10.0, 50.0])) == pytest.approx(1.0)
     assert np.isnan(M.phm2012_score(np.array([0.0]), np.array([1.0])))
+
+
+def test_regression_nll_is_the_student_t_log_density():
+    y, mean, dof, scale = np.array([0.5, -1.0]), np.array([0.0, 1.0]), np.array([4.0, 9.0]), 2.0
+    expected = -np.mean(stats.t.logpdf(y, dof, loc=mean, scale=scale))
+    assert M.regression(y, mean, dof, np.full(2, scale))["nll"] == pytest.approx(expected)
+
+
+def _t_samples(n: int, true_scale: float, seed: int = 0):
+    rng = np.random.default_rng(seed)
+    dof = np.full(n, 8.0)
+    mean = rng.normal(0, 3, n)
+    return mean + true_scale * rng.standard_t(8.0, n), mean, dof
+
+
+def test_interval_scale_repairs_too_narrow_intervals():
+    """Intervals 2.5 times too narrow: the fitted factor is about 2.5, and the calibrated 90 %
+    interval covers about 90 % of fresh targets."""
+    y, mean, dof = _t_samples(4000, true_scale=2.5)
+    factor = M.interval_scale(y, mean, dof, np.ones(4000))
+    assert factor == pytest.approx(2.5, rel=0.05)
+    fresh, mean, dof = _t_samples(20_000, true_scale=2.5, seed=1)
+    raw = M.regression(fresh, mean, dof, np.ones(20_000))
+    calibrated = M.regression(fresh, mean, dof, np.full(20_000, factor))
+    assert raw["coverage_90"] < 0.6
+    assert calibrated["coverage_90"] == pytest.approx(0.9, abs=0.015)
+    assert calibrated["nll"] < raw["nll"]
+
+
+def test_interval_scale_leaves_calibrated_intervals_alone():
+    y, mean, dof = _t_samples(4000, true_scale=1.0, seed=2)
+    assert M.interval_scale(y, mean, dof, np.ones(4000)) == pytest.approx(1.0, abs=0.05)
+
+
+def test_class_metrics_average_over_the_classes_present():
+    """Plan: a fold without a healthy test bearing is not scored on the healthy class."""
+    y = np.array([0, 0, 1, 1])  # class 2 absent from this fold
+    perfect = M.classification(y, np.eye(3)[y])
+    assert perfect["macro_f1"] == 1.0 and perfect["balanced_accuracy"] == 1.0
+    # Predicting the absent class still costs the true class: class 0 has F1 2/3, class 1 F1 1.
+    wrong = M.classification(y, np.eye(3)[[0, 2, 1, 1]])
+    assert wrong["macro_f1"] == pytest.approx((2 / 3 + 1) / 2)
+    assert wrong["balanced_accuracy"] == pytest.approx((0.5 + 1) / 2)

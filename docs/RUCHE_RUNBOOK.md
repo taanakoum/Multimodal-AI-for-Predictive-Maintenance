@@ -102,12 +102,15 @@ git log -1 --oneline
 `git status -sb` must show `## master...origin/master` with nothing after it; note the commit
 the last line prints.
 
-Pack the window stores. They are built from your local data and are identical on Ruche, so
-their keys and the feature caches built on them match on both machines:
+Pack the window stores, with the photo tokens and the text prototypes. The stores are built
+from your local data and are identical on Ruche, so their keys and the feature caches built
+on them match on both machines. Plan B needs the photo tokens (the raw photos never go to
+Ruche) and the class prototypes; both are small and keyed by paths relative to the data
+root, so they work there as they are:
 
 ```powershell
 cd D:\Project14\data
-tar -czf pdmfm-windows.tar.gz interim/windows/cwru interim/windows/xjtu_sy interim/windows/nonastreda interim/windows/kaist
+tar -czf pdmfm-windows.tar.gz interim/windows/cwru interim/windows/xjtu_sy interim/windows/nonastreda interim/windows/kaist interim/features/images interim/features/texts
 ```
 
 The archive is about 2.3 GB: the signals are float32 and compress little. KAIST is a target,
@@ -179,7 +182,8 @@ tar -xzf "$WORKDIR/pdmfm-windows.tar.gz" -C "$WORKDIR/pdmfm_data" && rm "$WORKDI
 ls "$WORKDIR/pdmfm_data/interim/windows"
 ```
 
-The `ls` must list `cwru kaist nonastreda xjtu_sy` (without `kaist` if you left it out).
+The `ls` must list `cwru kaist nonastreda xjtu_sy` (without `kaist` if you left it out), and
+`ls "$WORKDIR/pdmfm_data/interim/features"` must list `images texts`.
 
 ## 6. Python environment
 
@@ -371,7 +375,7 @@ the end of this section.
 **12.3 Extract, test and build the window store** (one CPU job):
 
 ```bash
-sbatch --job-name=paderborn slurm/cpu.sbatch bash -c "python -m pdmfm.fetch extract paderborn && python -m pytest -o addopts= -q -rs -m data -k paderborn tests/test_real_data.py && python -m pdmfm.windows build paderborn"
+sbatch --job-name=paderborn slurm/cpu.sbatch bash -c "python -m pdmfm.fetch extract paderborn && python -m pytest -o addopts= -q -rs -m data -k paderborn tests/test_real_data.py && python -m pdmfm.windows build paderborn && python -m pdmfm.features texts --dataset paderborn"
 ```
 
 The log `runs/logs/paderborn-*.out` must show:
@@ -379,7 +383,9 @@ The log `runs/logs/paderborn-*.out` must show:
 1. the extraction;
 2. `2 passed`: the acceptance tests, which check 32 bearings × 80 files, 64 kHz signals of
    about 4 s, and speeds that match the settings;
-3. `[windows] paderborn: N windows x 3 channels`, with N about 7,680 (3 windows per 4 s file).
+3. `[windows] paderborn: N windows x 3 channels`, with N about 7,680 (3 windows per 4 s file);
+4. `[texts] paderborn: 4 contexts, 3 prototypes`: the context sentence of each operating
+   setting, embedded now that the store exists (Qwen3 from the §8 cache, on the CPU).
 
 Then on Ruche, in `pdmfm/datasets/paderborn.py`, set `VERIFIED_ON_REAL_DATA = True`. Commit
 and push that change from the laptop, so both copies agree.
@@ -523,6 +529,10 @@ sbatch --job-name=planb-nonastreda-nophoto --time=02:00:00 slurm/job.sbatch \
 ```
 
 - Keep the quotes around `"$ENCODER"`: they protect `{fold}`.
+- Level tokens are relative to each unit's healthy baseline (`--levels relative`, the
+  default and the plan's form). `--levels both` (absolute descriptors) and `--force-mean`
+  (the static cutting force) are ablations, each run with a new run id
+  (`PROJECT_LOG.md`, week 5).
 - The handcrafted reference needs the §13 `stats` caches. Arms a dataset lacks are skipped,
   so `--arms F E` is right for all three.
 - Up to 4 of your A100 jobs run at once; the rest wait.

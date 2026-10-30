@@ -3,9 +3,9 @@
 * :class:`ModalityEncoder`: adapter (LayerNorm then Linear) from the encoder's width to
   d = 256 (an MLP 2 -> 64 -> d for descriptor tokens such as slow channels, where a
   LayerNorm over two numbers would erase them), plus token-role and channel embeddings, a
-  level MLP (4 -> 64 -> d) for level tokens and an age embedding for photos; attention
-  pooling with one learned query gives the modality summary z_m from that modality's tokens
-  only, so per-modality opinions stay independent.
+  level MLP (F -> 64 -> d for F level features) for level tokens and an age embedding for
+  photos; attention pooling with one learned query gives the modality summary z_m from that
+  modality's tokens only, so per-modality opinions stay independent.
 * :class:`PrototypeEvidentialHead`: text-anchored classes. q = normalize(W_q z); logits =
   s q P^T + b over the frozen Qwen prototypes P of the label space; evidence = softplus.
 * :class:`NIGHead`: MLP d -> 128 -> 4 with the NIG constraints.
@@ -33,6 +33,7 @@ class ModalityEncoder(nn.Module):
         heads: int = 4,
         dropout: float = 0.1,
         descriptor: bool = False,
+        level_dim: int = 4,
     ) -> None:
         super().__init__()
         if descriptor:
@@ -42,7 +43,7 @@ class ModalityEncoder(nn.Module):
         self.role = nn.Embedding(len(ROLES), d)
         self.channel = nn.Embedding(n_channels, d)
         self.level = (
-            nn.Sequential(nn.Linear(4, 64), nn.GELU(), nn.Linear(64, d)) if levels else None
+            nn.Sequential(nn.Linear(level_dim, 64), nn.GELU(), nn.Linear(64, d)) if levels else None
         )
         self.age = nn.Linear(1, d) if age else None
         self.query = nn.Parameter(torch.randn(1, 1, d) * 0.02)
@@ -56,7 +57,7 @@ class ModalityEncoder(nn.Module):
         roles: torch.Tensor,  # (T,)
         channels: torch.Tensor,  # (T,)
         token_present: torch.Tensor | None = None,  # (B, T) bool
-        levels: torch.Tensor | None = None,  # (B, L, 4)
+        levels: torch.Tensor | None = None,  # (B, L, level_dim)
         level_channels: torch.Tensor | None = None,  # (L,)
         age: torch.Tensor | None = None,  # (B, T) seconds
     ) -> tuple[torch.Tensor, torch.Tensor]:

@@ -51,10 +51,6 @@ def n_tokens(store: WindowStore, arm: str) -> int:
     return n_inputs(store, arm) // GROUP if arm == "T" else 1
 
 
-def input_length(store: WindowStore, arm: str) -> int:
-    return store.window if arm == "S" else pp.SEGMENT
-
-
 def arm_input(store: WindowStore, rows: np.ndarray, arm: str) -> np.ndarray:
     """(len(rows), channels, inputs, length) float32 encoder inputs for the given rows."""
     rows = np.asarray(rows)

@@ -214,15 +214,6 @@ def test_slow_summary_recovers_mean_and_slope():
     assert abs(slope - 0.5) < 1e-6 and abs(mean - (20 + 0.5 * t.mean())) < 1e-4
 
 
-def test_baseline_and_relative_levels():
-    healthy = np.array([[1.0, 2.0, 3.0, 4.0], [3.0, 2.0, 3.0, 4.0], [2.0, 5.0, 3.0, 4.0]])
-    baseline = pp.healthy_baseline(healthy)
-    np.testing.assert_allclose(baseline, [2.0, 2.0, 3.0, 4.0])
-    np.testing.assert_allclose(pp.relative_to_baseline(healthy[0], baseline), [-1, 0, 0, 0])
-    with pytest.raises(ValueError):
-        pp.healthy_baseline(np.zeros((0, 4)))
-
-
 def test_defect_frequencies_match_published_values():
     # Paderborn 6203 at 1500 rpm: the PHME 2016 paper shows BPFO = 76.25 Hz.
     paderborn = pp.defect_frequencies(8, 6.75, 28.5, 0.0, 25.0)

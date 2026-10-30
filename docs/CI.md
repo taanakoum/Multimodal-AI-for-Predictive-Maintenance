@@ -31,7 +31,7 @@ $env:PDMFM_NETWORK_TESTS = "1"; pytest -m network   # publishers still serve the
 |---|---|
 | `test_paths.py`, `test_sources.py` | Data-root resolution; the dataset registry (unique paths, licences, Paderborn split lists) |
 | `test_fetch.py` | Downloader: hashes, resume, HTML rejection, manifests, seeding from a local copy, parallel downloads, Mendeley paths, archive extraction, `verify` for hand-placed files |
-| `test_schema.py` | `Sample` validation; the as-of join never attaches an image captured at or after the window start |
+| `test_schema.py` | The as-of join never attaches an image captured at or after the window start; missing kinds stay absent |
 | `test_preprocess.py` | Exact resampling ratios and anti-aliasing; windows; F- and E-arm spectra; the 5 kHz band limit (flat passband, ≥ 80 dB stop band, no delay, recorder roll-off case); dominant-frequency estimate; level descriptors; FPT; RUL |
 | `test_resources.py` | CPU/RAM guard (busy refusal, waiting, SLURM cores, thread caps) |
 | `test_readers.py` | Every reader on synthetic MAT/TDMS/CSV/BMP files in the real layout (Nonastreda through a stand-in `omnifuser.data`) |
@@ -44,9 +44,9 @@ $env:PDMFM_NETWORK_TESTS = "1"; pytest -m network   # publishers still serve the
 | `test_probe.py` | Gate 1 on synthetic stores: scores per task, validation units only, shared rows, per-fold models, inapplicable arms ranked last, tie to the cheaper encoder, parallel = serial |
 | `test_patchtst.py` | Pretraining corpus per fold; resume after an interruption; refusal of other settings; the checkpoint loads as an encoder |
 | `test_evidential.py` | Dempster's rule on hand-computed opinions (conflict, agreement, vacuous identity, commutativity, associativity); TMC loss and KL by closed form; NIG NLL equals the Student-t log density; MoNIG by hand; absent modalities skipped; a fitted NIG gives 90 % coverage |
-| `test_metrics.py` | ECE, Brier and NLL by hand; temperature scaling repairs a known overconfidence and leaves calibrated predictions alone; Student-t interval coverage and width; PHM 2012 score values |
-| `test_inputs.py` | Token sets from the caches: cached tokens copied unchanged, roles and channels, no Fz level, levels relative to each tool's first pass (and, for Paderborn, to the healthy *training* bearings per setting), previous-pass photos with age and masks, slow-channel tokens, absent rows for uncached windows, text prototypes in YAML order |
-| `test_planb.py` | Plan B: shapes; an absent or dropped modality leaves the other opinion and NIG unchanged; masked tokens have no effect; ≤ 3 M parameters at full size; reproducible training; learning on synthetic wear classes; resume and refusal of other settings; persistence baselines on a known sequence; per-fold inputs (Paderborn, `{fold}` encoders); `--without`; the command line |
+| `test_metrics.py` | ECE, Brier and NLL by hand; macro-F1 and balanced accuracy over the classes present; temperature scaling repairs a known overconfidence and leaves calibrated predictions alone; Student-t NLL, interval coverage and width; the interval scale recovers a known factor and gives 90 % coverage; PHM 2012 score values |
+| `test_inputs.py` | Token sets from the caches: cached tokens copied unchanged, roles and channels, no Fz level, window means, level modes (absolute, relative, both; the force mean descriptor), levels relative to each tool's first pass (and, for Paderborn, to the healthy *training* bearings per setting), KAIST refused until stage 8, previous-pass photos with age and masks, slow-channel tokens, absent rows for uncached windows, text prototypes in YAML order, and scrambled `meta_*` manifest columns that change no input |
+| `test_planb.py` | Plan B: shapes; an absent or dropped modality leaves the other opinion and NIG unchanged; masked tokens have no effect; ≤ 3 M parameters at full size; reproducible training; learning on synthetic wear classes; resume and refusal of other settings; persistence baselines on a known sequence; level and slow descriptors standardized with training rows only; calibrated intervals equal the raw ones times the fitted factor; per-fold inputs (Paderborn, `{fold}` encoders); `--without`; the command line |
 | `test_slurm.py` | The Ruche scripts parse; chains link each part to the previous one; jobs refuse to run outside SLURM; status runs anywhere and counts Plan B results (Linux only) |
 | `test_real_data.py` | Facts verified on the real downloads and the window stores built from them, kept as regression tests; acceptance tests for Paderborn and PHM 2010 (`docs/USER_ACTIONS.md`) |
 | `test_network.py` | Publisher sizes and hashes (Najafi, KAIST, MBHM, CWRU, NASA) |
@@ -119,12 +119,14 @@ Weekly grouped pull requests for GitHub Actions versions and Python dependencies
 | What the fresh environment caught | pandas 3.1 (installed by CI) types text columns as strings; one test asserted `object` | Test made version-independent; it would have failed on GitHub |
 | Week 5 (Plan B), fresh environments (2026-10-29) | `run_local_ci.sh` on Python 3.11 and 3.12 | **284 passed, 46 skipped** on both; pyright **0 errors**; coverage 85 %; the new modules (losses, metrics, model, train, planb) at 99 % |
 | Week 5, full local suite | `pytest` with the real data and cached checkpoints | **309 passed, 25 skipped** (5 network, 4 Paderborn and PHM 2010 acceptance, 16 Linux-only SLURM tests) |
+| Week 5 after the audit (2026-10-30) | Full local suite; `run_local_ci.sh` on 3.11 and 3.12 | **315 passed, 25 skipped** locally; **290 passed, 46 skipped** in both fresh environments; coverage 85 %; pyright **0 errors** |
 
 **Not covered by CI:**
 - the real data (local and Ruche only);
 - GPU code paths;
-- the encoder extras (`mantis-tsfm`, `transformers` models): the weights are too large for CI,
-  and `scripts/week1/encoder_smoke.py` covers them locally;
+- the encoder extras (`mantis-tsfm`, `transformers` models): the weights are too large for CI;
+  the `weights` tests in `test_encoders.py` load the real checkpoints locally and in the Ruche
+  step-0 job;
 - the Ruche shell scripts, beyond `bash -n` syntax checks.
 
 **Run CI locally before pushing:** `bash scripts/ci/run_local_ci.sh` (Git Bash, needs `uv`).

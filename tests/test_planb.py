@@ -240,7 +240,14 @@ def test_result_contents(root):
         assert "bag" in test[key]
     assert {"combined", "only_force", "without_photo"} <= set(test["regression"])
     assert {"uncertainty", "conflict", "trust_force", "trust_photo"} <= set(test["trust"])
-    assert 0.05 <= result["temperature"] <= 20
+    assert 0.05 <= result["temperature"] <= 20 and 0.05 <= result["interval_scale"] <= 20
+    # The calibrated intervals are the raw ones times the fitted factor, nothing else.
+    raw, calibrated = test["regression"]["combined"], test["regression"]["combined_calibrated"]
+    for level in ("window", "bag"):
+        assert calibrated[level]["width_90"] == pytest.approx(
+            raw[level]["width_90"] * result["interval_scale"], rel=1e-5
+        )
+        assert calibrated[level]["rmse"] == pytest.approx(raw[level]["rmse"])
     assert result["split"] == "nonastreda-fold1" and len(result["history"]) == SMALL.epochs
     manifest = load(root, "nonastreda", ("T", "F")).manifest
     saved = np.load(out / "fold1-seed0.npz")
@@ -290,9 +297,11 @@ def test_xjtu_rul_run(root):
     combined = result["test"]["regression"]["combined"]["bag"]
     assert {"rmse", "mae", "coverage_90", "width_90", "phm2012"} <= set(combined)
     assert "combined" not in result["test"] and result["temperature"] is None
+    assert result["interval_scale"] > 0 and "combined_calibrated" in result["test"]["regression"]
     assert set(result["baselines"]) == {"train_mean"}  # no RUL persistence
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "## Regression" in summary and "baseline: train_mean" in summary
+    assert "interval scale" in summary and "| combined_calibrated |" in summary
 
 
 def test_summary_over_folds_and_seeds(root):
@@ -392,3 +401,43 @@ def test_modalities_can_be_left_out(root):
             window_root=root / "interim" / "windows", feature_root=root / "interim" / "features",
             log=quiet, without=("slow",),
         )  # fmt: skip
+
+
+def test_levels_are_standardized_with_training_rows_only(nona):
+    split = protocols.nonastreda_fold(nona.manifest, 1)
+    train = np.flatnonzero(split.train)
+    model = LateEvidential(nona, d=16, train_rows=train)
+    levels = nona.modalities["force"].levels
+    np.testing.assert_allclose(
+        model.levels_force_mean.numpy(), levels[train].mean(axis=0), rtol=1e-4, atol=1e-5
+    )
+    np.testing.assert_allclose(
+        model.levels_force_std.numpy(), levels[train].std(axis=0), rtol=1e-4, atol=1e-5
+    )
+    # Test rows never enter the statistics.
+    changed = TaskInputs(**{**nona.__dict__, "modalities": {**nona.modalities}})
+    shifted = levels.copy()
+    shifted[np.flatnonzero(split.test)] += 1000.0
+    changed.modalities["force"] = Modality(
+        **{**nona.modalities["force"].__dict__, "levels": shifted}
+    )
+    again = LateEvidential(changed, d=16, train_rows=train)
+    torch.testing.assert_close(again.levels_force_mean, model.levels_force_mean)
+    identity = LateEvidential(nona, d=16)
+    assert torch.all(identity.levels_force_mean == 0) and torch.all(identity.levels_force_std == 1)
+
+
+def test_slow_tokens_are_standardized_over_present_tokens(root):
+    manifest = load(root, "paderborn", ("F",), train_units=["K003"]).manifest
+    split = protocols.paderborn_fold(manifest, 1)
+    units = sorted(split.units(manifest, "train"))
+    inputs = load(root, "paderborn", ("F",), train_units=units)
+    slow = inputs.modalities["slow"]
+    slow.token_present[:4] = False  # a channel missing in some training rows
+    train = np.flatnonzero(split.train)
+    model = LateEvidential(inputs, d=16, train_rows=train)
+    present = train[slow.token_present[train, 0]]
+    np.testing.assert_allclose(
+        model.tokens_slow_mean.numpy()[0], slow.tokens[present, 0].mean(axis=0), rtol=1e-4,
+        atol=1e-5,
+    )  # fmt: skip

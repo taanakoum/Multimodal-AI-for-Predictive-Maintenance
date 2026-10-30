@@ -5,8 +5,9 @@ For each fold and seed: fit on the fold's training units; pick the epoch and fit
 temperature on its inner-validation units; score its test units:
 
 * the combined prediction, per window and per bag (pass, snapshot), before and after
-  temperature scaling (accuracy, balanced accuracy, macro-F1, ECE, Brier, NLL; RMSE, MAE,
-  90 % interval coverage and width, PHM 2012 score for RUL);
+  calibration on the inner-validation units: temperature scaling for the classes, one
+  interval scale for wear and RUL (decision D). Accuracy, balanced accuracy, macro-F1, ECE,
+  Brier, NLL; RMSE, MAE, Student-t NLL, 90 % interval coverage and width, PHM 2012 score;
 * every modality alone, and the combination without each modality (missing-modality test);
 * baselines: majority class (training prior), persistence (Nonastreda: the previous pass's
   label and wear), and the training mean for regression.
@@ -36,7 +37,7 @@ import torch
 
 from pdmfm import losses, protocols
 from pdmfm import metrics as M
-from pdmfm.model.inputs import FOLD_BASELINE, TaskInputs, assemble
+from pdmfm.model.inputs import FOLD_BASELINE, LEVEL_MODES, TaskInputs, assemble
 from pdmfm.paths import REPO_ROOT
 from pdmfm.train import TrainConfig, bag_mean, fit, predict
 from pdmfm.utils import stable_hash, write_json_atomic
@@ -80,7 +81,6 @@ def _classes(inputs: TaskInputs, rows, evidence, temperature: float | None = Non
     keep = y >= 0
     if not keep.any():
         return {}
-    k = len(inputs.classes)
     bags = inputs.manifest["bag"].astype(str).to_numpy()[rows][keep]
     window = _probs(evidence[keep])
     _, bag_evidence = bag_mean(evidence[keep], bags)
@@ -92,12 +92,22 @@ def _classes(inputs: TaskInputs, rows, evidence, temperature: float | None = Non
             M.apply_temperature(bag, temperature),
         )
     return {
-        "window": M.classification(y[keep], window, k),
-        "bag": M.classification(bag_y.round().astype(int), bag, k),
+        "window": M.classification(y[keep], window),
+        "bag": M.classification(bag_y.round().astype(int), bag),
     }
 
 
-def _regression(inputs: TaskInputs, rows, nig: np.ndarray, y_mean: float, y_std: float) -> dict:
+def student_t(nig: np.ndarray, y_mean: float, y_std: float):
+    """(mean, degrees of freedom, scale) of the NIG predictive, in target units."""
+    params = torch.from_numpy(np.asarray(nig, dtype=np.float32))
+    dof, scale = (t.numpy() for t in losses.nig_predictive_scale(params))
+    return np.asarray(nig)[:, 0] * y_std + y_mean, dof, scale * y_std
+
+
+def _regression(
+    inputs: TaskInputs, rows, nig: np.ndarray, y_mean: float, y_std: float, interval: float = 1.0
+) -> dict:
+    """Window- and bag-level regression metrics; ``interval`` multiplies the predictive scale."""
     assert inputs.y_reg is not None
     y = inputs.y_reg[rows]
     keep = np.isfinite(y)
@@ -106,9 +116,8 @@ def _regression(inputs: TaskInputs, rows, nig: np.ndarray, y_mean: float, y_std:
     bags = inputs.manifest["bag"].astype(str).to_numpy()[rows][keep]
 
     def scored(params, target):
-        dof, scale = (t.numpy() for t in losses.nig_predictive_scale(torch.from_numpy(params)))
-        mean = params[:, 0] * y_std + y_mean
-        out = M.regression(target, mean, dof, scale * y_std)
+        mean, dof, scale = student_t(params, y_mean, y_std)
+        out = M.regression(target, mean, dof, scale * interval)
         if inputs.regression_target == "rul":
             out["phm2012"] = M.phm2012_score(target, np.clip(mean, 0.0, 1.0))
         return out
@@ -143,6 +152,7 @@ def evaluate(
     y_mean: float,
     y_std: float,
     temperature: float | None,
+    interval_scale: float | None = None,
 ) -> dict:
     names = list(inputs.modalities)
     result: dict = {"trust": _trust(pred, names)}
@@ -160,6 +170,10 @@ def evaluate(
         result.setdefault("regression", {})["combined"] = _regression(
             inputs, rows, pred["fused_nig"], y_mean, y_std
         )
+        if interval_scale is not None:
+            result["regression"]["combined_calibrated"] = _regression(
+                inputs, rows, pred["fused_nig"], y_mean, y_std, interval_scale
+            )
         for m, name in enumerate(names):
             present = pred["present"][:, m]
             if present.any():
@@ -199,7 +213,7 @@ def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray)
         prior = np.bincount(y_train, minlength=k) / max(len(y_train), 1)
         labels = inputs.y_class[first.index.to_numpy()]
         keep = labels >= 0
-        out["majority"] = M.classification(labels[keep], np.tile(prior, (int(keep.sum()), 1)), k)
+        out["majority"] = M.classification(labels[keep], np.tile(prior, (int(keep.sum()), 1)))
         if ordered is not None:
             y = inputs.y_class[ordered.index.to_numpy()]
             previous = ordered.groupby("unit")["class_key"].shift(1)
@@ -211,7 +225,7 @@ def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray)
                 ]
             )
             keep = y >= 0
-            out["persistence"] = M.classification(y[keep], np.eye(k)[guess[keep]], k)
+            out["persistence"] = M.classification(y[keep], np.eye(k)[guess[keep]])
     if inputs.y_reg is not None:
         y_train = inputs.y_reg[train_rows]
         mean = float(np.nanmean(y_train))
@@ -241,19 +255,40 @@ def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray)
 # ----------------------------------------------------------------------------- runs
 
 
-def _prepare(
-    dataset, encoder, arm_list, cfg, photos, without, train_units, window_root, feature_root, log
-):
+def _calibrate(inputs: TaskInputs, val_rows, val_pred: dict, y_mean: float, y_std: float):
+    """(temperature, interval scale) fitted on the inner-validation windows; None where the
+    task or its labels are absent."""
+    temperature = interval = None
+    if "combined" in val_pred and inputs.y_class is not None:
+        y = inputs.y_class[val_rows]
+        keep = y >= 0
+        if keep.any():
+            temperature = M.temperature_scale(y[keep], _probs(val_pred["combined"][keep]))
+    if "fused_nig" in val_pred and inputs.y_reg is not None:
+        y = inputs.y_reg[val_rows]
+        keep = np.isfinite(y)
+        if keep.any():
+            mean, dof, scale = student_t(val_pred["fused_nig"][keep], y_mean, y_std)
+            interval = M.interval_scale(y[keep], mean, dof, scale)
+    return temperature, interval
+
+
+def _prepare(dataset, encoder, arm_list, cfg, train_units, options: dict, log):
     """(inputs, settings, settings key, rows with any modality present) for one encoder.
-    Modalities named in ``without`` are left out of the model."""
+    ``options`` holds :func:`run`'s photos, without, levels, force_mean, window_root and
+    feature_root;
+    modalities named in ``without`` are left out of the model."""
+    photos, without = options["photos"], options["without"]
     inputs = assemble(
         dataset,
         encoder,
         arm_list,
         photos=photos,
-        window_root=window_root,
-        feature_root=feature_root,
+        window_root=options["window_root"],
+        feature_root=options["feature_root"],
         train_units=train_units,
+        levels=options["levels"],
+        force_mean=options["force_mean"],
     )
     unknown = set(without) - set(inputs.modalities)
     if unknown:
@@ -287,6 +322,8 @@ def run(
     feature_root: Path | None = None,
     log=print,
     without: tuple[str, ...] = (),
+    levels: str = "relative",
+    force_mean: bool = False,
 ) -> Path:
     if dataset not in FOLDS:
         raise ValueError(f"Plan B runs on the source datasets with outer folds: {sorted(FOLDS)}")
@@ -294,16 +331,22 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
     manifest = WindowStore.open(dataset, window_root).manifest
     per_fold = "{fold}" in encoder or dataset in FOLD_BASELINE
+    options = {
+        "photos": photos,
+        "without": without,
+        "levels": levels,
+        "force_mean": force_mean,
+        "window_root": window_root,
+        "feature_root": feature_root,
+    }
     prepared = None
     for fold in folds:
         split = FOLDS[dataset](manifest, fold)
         split.assert_unit_disjoint(manifest)
         if prepared is None or per_fold:
             train_units = sorted(split.units(manifest, "train"))
-            prepared = _prepare(
-                dataset, encoder.replace("{fold}", str(fold)), arm_list, cfg, photos, without,
-                train_units, window_root, feature_root, log,
-            )  # fmt: skip
+            encoder_k = encoder.replace("{fold}", str(fold))
+            prepared = _prepare(dataset, encoder_k, arm_list, cfg, train_units, options, log)
         inputs, settings, key, any_present = prepared
         labelled = any_present.copy()
         if inputs.y_class is not None:
@@ -324,13 +367,9 @@ def run(
             log(f"[planb] fold {fold} seed {seed}: {sizes} windows")
             fitted = fit(inputs, train_rows, val_rows, cfg, seed, log=log)
             val_pred = predict(fitted.model, inputs, val_rows, cfg)
-            temperature = None
-            if "combined" in val_pred and inputs.y_class is not None:
-                y_val = inputs.y_class[val_rows]
-                keep = y_val >= 0
-                temperature = M.temperature_scale(y_val[keep], _probs(val_pred["combined"][keep]))
-            test_pred = predict(fitted.model, inputs, test_rows, cfg)
             y_mean, y_std = fitted.y_mean, fitted.y_std
+            temperature, interval = _calibrate(inputs, val_rows, val_pred, y_mean, y_std)
+            test_pred = predict(fitted.model, inputs, test_rows, cfg)
             trainable = sum(p.numel() for p in fitted.model.parameters() if p.requires_grad)
             result = {
                 "dataset": dataset,
@@ -342,9 +381,12 @@ def run(
                 "best_epoch": fitted.best_epoch,
                 "seconds": round(fitted.seconds, 1),
                 "temperature": temperature,
+                "interval_scale": interval,
                 "n_params": int(trainable),
                 "validation": evaluate(inputs, val_rows, val_pred, y_mean, y_std, None),
-                "test": evaluate(inputs, test_rows, test_pred, y_mean, y_std, temperature),
+                "test": evaluate(
+                    inputs, test_rows, test_pred, y_mean, y_std, temperature, interval
+                ),
                 "baselines": baselines(inputs, train_rows, test_rows),
                 "history": fitted.history,
             }
@@ -374,6 +416,7 @@ def summarize(out: Path) -> pd.DataFrame:
                 "test": result["test"],
                 "baselines": result["baselines"],
                 "temperature": result["temperature"],
+                "interval_scale": result.get("interval_scale"),
             },
             flat,
         )
@@ -408,6 +451,13 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
         f"{runs} runs (outer folds x seeds); test units; mean ± std.",
         "",
     ]
+    fitted = [
+        f"{name} {_cell(summary, key)}"
+        for name, key in (("temperature", "temperature"), ("interval scale", "interval_scale"))
+        if key in summary.index
+    ]
+    if fitted:
+        lines += [f"Calibration fitted on the inner-validation units: {'; '.join(fitted)}.", ""]
     class_rows = [k for k in keys if f"test.{k}.bag.macro_f1" in summary.index]
     if class_rows:
         lines += [
@@ -437,12 +487,12 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
         lines += [
             "## Regression (bag level)",
             "",
-            "| Variant | RMSE | MAE | 90 % coverage | 90 % width | PHM 2012 |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| Variant | RMSE | MAE | NLL | 90 % coverage | 90 % width | PHM 2012 |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
         for k in reg_rows:
             base = f"test.regression.{k}.bag"
-            names = ("rmse", "mae", "coverage_90", "width_90", "phm2012")
+            names = ("rmse", "mae", "nll", "coverage_90", "width_90", "phm2012")
             lines.append(_row(summary, k, [f"{base}.{n}" for n in names]))
         for name in ("train_mean", "persistence_regression"):
             base = f"baselines.{name}"
@@ -451,7 +501,7 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
                     _row(
                         summary,
                         f"baseline: {name}",
-                        [f"{base}.rmse", f"{base}.mae", None, None, None],
+                        [f"{base}.rmse", f"{base}.mae", None, None, None, None],
                     )
                 )
         lines.append("")
@@ -489,6 +539,15 @@ def main(argv: list[str] | None = None) -> None:
         metavar="MODALITY",
         help="leave modalities out of the model, e.g. slow (a confounded temperature)",
     )
+    parser.add_argument(
+        "--levels",
+        default="relative",
+        choices=LEVEL_MODES,
+        help="level tokens: baseline-relative (default, the plan), absolute, or both",
+    )
+    parser.add_argument(
+        "--force-mean", action="store_true", help="add force channels' window mean (ablation)"
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", type=Path, help="results folder (default: runs/planb)")
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
@@ -511,6 +570,8 @@ def main(argv: list[str] | None = None) -> None:
         photos=not args.no_photos,
         out_root=args.out,
         without=tuple(args.without),
+        levels=args.levels,
+        force_mean=args.force_mean,
     )
     print(f"[planb] done in {time.perf_counter() - started:.0f} s -> {out}")
 

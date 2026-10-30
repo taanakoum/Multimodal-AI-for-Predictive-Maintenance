@@ -52,7 +52,7 @@ def server():
 
 def test_download_verifies_size_and_hash(server, tmp_path):
     remote = RemoteFile(f"{server}/a.bin", "a.bin", size=len(PAYLOAD), sha256=DIGEST)
-    assert fetch.download_file(remote, tmp_path / "a.bin") == DIGEST
+    assert fetch.obtain_file(remote, tmp_path / "a.bin")[0] == DIGEST
     assert (tmp_path / "a.bin").read_bytes() == PAYLOAD
     assert not (tmp_path / "a.bin.part").exists()
 
@@ -60,27 +60,27 @@ def test_download_verifies_size_and_hash(server, tmp_path):
 def test_download_resumes_a_partial_file(server, tmp_path):
     (tmp_path / "a.bin.part").write_bytes(PAYLOAD[:300_000])
     remote = RemoteFile(f"{server}/a.bin", "a.bin", size=len(PAYLOAD), sha256=DIGEST)
-    fetch.download_file(remote, tmp_path / "a.bin")
+    fetch.obtain_file(remote, tmp_path / "a.bin")
     assert (tmp_path / "a.bin").read_bytes() == PAYLOAD
 
 
 def test_wrong_hash_is_rejected_and_nothing_is_kept(server, tmp_path):
     remote = RemoteFile(f"{server}/a.bin", "a.bin", sha256="0" * 64)
     with pytest.raises(fetch.DownloadError, match="SHA-256"):
-        fetch.download_file(remote, tmp_path / "a.bin")
+        fetch.obtain_file(remote, tmp_path / "a.bin")
     assert not (tmp_path / "a.bin").exists() and not (tmp_path / "a.bin.part").exists()
 
 
 def test_html_instead_of_data_is_an_error(server, tmp_path):
     remote = RemoteFile(f"{server}/page.html.bin", "page.bin")
     with pytest.raises(fetch.DownloadError, match="HTML"):
-        fetch.download_file(remote, tmp_path / "page.bin")
+        fetch.obtain_file(remote, tmp_path / "page.bin")
 
 
 def test_existing_good_file_is_not_downloaded_again(tmp_path):
     (tmp_path / "a.bin").write_bytes(PAYLOAD)
     remote = RemoteFile("http://127.0.0.1:9/unreachable", "a.bin", sha256=DIGEST)
-    assert fetch.download_file(remote, tmp_path / "a.bin") == DIGEST
+    assert fetch.obtain_file(remote, tmp_path / "a.bin")[0] == DIGEST
 
 
 def test_fetch_dataset_writes_a_manifest(server, tmp_path, monkeypatch):

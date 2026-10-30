@@ -6,14 +6,23 @@ with the window store's manifest:
 * **Sensor modalities**, one per channel family (force, vibration, current): every
   channel's cached tokens of the chosen arms (T: 6 or 4 tokens, F and E: 1 each), with a
   channel index and a token role per token.
-* **Level tokens** per channel: the four level descriptors minus the unit's healthy
-  baseline (plan, step 5). Nonastreda: the tool's first pass, and no Fz level token (sensor
-  drift); XJTU-SY: the bearing's first 10 snapshots; CWRU and KAIST: the normal recording at
-  the same load; Paderborn: the healthy *training* bearings at the same operating setting,
-  so its baseline depends on the fold (``train_units``). The baseline uses only data of the
-  unit's healthy start or of training units, so it is available at prediction time.
+* **Level tokens** per channel: log RMS, log peak, kurtosis and crest factor (no Fz token on
+  Nonastreda: Fz drifts by recording block, EDA F10). ``levels`` chooses the descriptors
+  minus the unit's healthy baseline (``relative``, the plan's step 5 and the default), the
+  absolute descriptors, or ``both``. ``force_mean`` adds the window mean of force channels
+  (the static cutting force). Both options are ablations: on the Nonastreda
+  inner-validation tools, absolute levels made no difference and the force mean lowered the
+  force expert (PROJECT_LOG.md, week 5), although Fx and Fy means follow flank wear across
+  passes (Spearman ±0.67).
+  Baselines: Nonastreda, the tool's first pass; XJTU-SY, the bearing's first 10
+  snapshots; CWRU, the normal recording at the same load (Gate 1 and pretraining only);
+  Paderborn, the healthy *training* bearings at the same setting, so it depends on the fold
+  (``train_units``). Each uses only the unit's healthy start or training units, so it is
+  available at prediction time. KAIST's baseline is its support set's normal windows
+  (stage 8), not given here.
 * **Slow channels** (Paderborn temperature): one token per channel from its per-window mean
-  and slope minus the same baseline, embedded by a small MLP (plan, "Slow token").
+  and slope minus the same baseline, embedded by a small MLP (plan, "Slow token"); always
+  relative, because absolute temperature identifies the recording session (EDA F3).
 * **Photos** (Nonastreda): the DINOv2 tokens of the previous pass's tool, chip and workpiece
   photos attached by the as-of join, with their age; a pass without photos is a missing
   modality (mask false), never zeros.
@@ -35,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from pdmfm import arms
+from pdmfm import preprocess as pp
 from pdmfm import texts as text_specs
 from pdmfm.features import FeatureStore
 from pdmfm.paths import interim_dir
@@ -44,6 +54,8 @@ ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "s
 ROLE = {name: i for i, name in enumerate(ROLES)}
 PHOTO_KINDS = ("tool", "chip", "workpiece")
 NO_LEVEL = {"nonastreda": ("fz",)}  # Fz drifts by block (EDA F10)
+DC_FAMILIES = ("force",)  # channels whose window mean ``force_mean`` adds
+LEVEL_MODES = ("relative", "both", "absolute")
 FOLD_BASELINE = ("paderborn",)  # level baseline from the fold's training units
 REGRESSION_TARGET = {"nonastreda": "wear_um", "xjtu_sy": "rul", "phm2010": "wear_um"}
 
@@ -56,7 +68,7 @@ class Modality:
     channels: np.ndarray  # (T,) channel index within the dataset
     present: np.ndarray  # (N,) bool: the modality exists for the row
     token_present: np.ndarray | None = None  # (N, T) bool, None: all tokens present
-    levels: np.ndarray | None = None  # (N, L, 4) relative level descriptors
+    levels: np.ndarray | None = None  # (N, L, F) level descriptors (see ``level_names``)
     level_channels: np.ndarray | None = None  # (L,) channel index of each level token
     age: np.ndarray | None = None  # (N, T) seconds since capture (photos)
     descriptor: bool = False  # tokens are small descriptor vectors (slow channels)
@@ -92,15 +104,17 @@ def baseline_groups(
     if dataset == "xjtu_sy":  # the bearing's first 10 snapshots
         early = manifest["meta_minute"].to_numpy() <= 10
         return manifest["unit"].astype(str).to_numpy(), np.asarray(early)
-    if dataset in ("cwru", "kaist"):  # the normal recording at the same load
-        load = "load_hp" if dataset == "cwru" else "load_nm"
-        return manifest[load].astype(str).to_numpy(), (manifest["class_key"] == "normal").to_numpy()
+    if dataset == "cwru":  # the normal recording at the same load (Gate 1 and pretraining)
+        normal = manifest["class_key"] == "normal"
+        return manifest["load_hp"].astype(str).to_numpy(), normal.to_numpy()
     if dataset == "paderborn":  # healthy training bearings at the same operating setting
         if train_units is None:
             raise ValueError("paderborn's level baseline uses the fold's training bearings")
         healthy = manifest["class_key"] == "healthy"
         reference = healthy & manifest["unit"].astype(str).isin(list(train_units))
         return manifest["setting"].astype(str).to_numpy(), reference.to_numpy()
+    # KAIST: the plan's baseline is the normal windows of the support set (stage 8); the
+    # normal recording at the test load would be a test window.
     raise NotImplementedError(f"no level baseline rule for {dataset} yet")
 
 
@@ -117,10 +131,42 @@ def _relative(values: np.ndarray, keys: np.ndarray, reference: np.ndarray, datas
     return out
 
 
-def relative_levels(store: WindowStore, train_units=None) -> np.ndarray:
-    """(N, C, 4) level descriptors minus the median of the row's reference windows."""
+_MEANS: dict[str, np.ndarray] = {}
+
+
+def window_means(store: WindowStore) -> np.ndarray:
+    """(N, C) mean of every window and channel (the stored model input keeps DC), computed
+    once per store and process."""
+    if store.key not in _MEANS:
+        _MEANS[store.key] = np.concatenate(
+            [
+                np.asarray(store.signals[i : i + 512], dtype=np.float64).mean(axis=2)
+                for i in range(0, len(store), 512)
+            ]
+        ).astype(np.float32)
+    return _MEANS[store.key]
+
+
+def absolute_levels(store: WindowStore, with_mean: bool = False) -> np.ndarray:
+    """(N, C, 4) stored level descriptors; (N, C, 5) with the window mean."""
+    if not with_mean:
+        return store.levels
+    return np.concatenate([store.levels, window_means(store)[:, :, None]], axis=2)
+
+
+def relative_levels(store: WindowStore, train_units=None, with_mean: bool = False) -> np.ndarray:
+    """Level descriptors minus the median of the row's reference windows."""
     keys, reference = baseline_groups(store.dataset, store.manifest, train_units)
-    return _relative(store.levels, keys, reference, store.dataset)
+    return _relative(absolute_levels(store, with_mean), keys, reference, store.dataset)
+
+
+def level_names(family: str, mode: str, force_mean: bool = False) -> list[str]:
+    """Names of the level features of one channel family, in order."""
+    with_mean = force_mean and family in DC_FAMILIES
+    base = list(pp.LEVEL_NAMES) + (["mean"] if with_mean else [])
+    if mode == "both":
+        return [f"absolute_{n}" for n in base] + [f"relative_{n}" for n in base]
+    return [f"{mode}_{n}" for n in base]
 
 
 def relative_slow(store: WindowStore, train_units=None) -> np.ndarray:
@@ -131,10 +177,23 @@ def relative_slow(store: WindowStore, train_units=None) -> np.ndarray:
 
 
 def _sensor_modalities(
-    store: WindowStore, encoder: str, arm_list, feature_store: FeatureStore, train_units=None
+    store: WindowStore,
+    encoder: str,
+    arm_list,
+    feature_store: FeatureStore,
+    train_units=None,
+    levels: str = "relative",
+    force_mean: bool = False,
 ):
+    if levels not in LEVEL_MODES:
+        raise ValueError(f"levels must be one of {LEVEL_MODES}, not {levels!r}")
     families = sorted(set(store.families), key=store.families.index)
-    levels = relative_levels(store, train_units)
+    with_mean = force_mean and any(f in DC_FAMILIES for f in families)
+    forms = []
+    if levels in ("both", "absolute"):
+        forms.append(absolute_levels(store, with_mean))
+    if levels in ("both", "relative"):
+        forms.append(relative_levels(store, train_units, with_mean))
     skip = set(NO_LEVEL.get(store.dataset, ()))
     modalities = {}
     done = np.ones(len(store), dtype=bool)
@@ -159,13 +218,19 @@ def _sensor_modalities(
         level_ch = [
             i for i, f in enumerate(store.families) if f == family and store.channels[i] not in skip
         ]
+        n_features = 5 if with_mean and family in DC_FAMILIES else 4
+        family_levels = (
+            np.concatenate([form[:, level_ch, :n_features] for form in forms], axis=2)
+            if level_ch
+            else None
+        )
         modalities[family] = Modality(
             name=family,
             tokens=np.concatenate(blocks, axis=1),
             roles=np.asarray(roles),
             channels=np.asarray(channels),
             present=np.ones(len(store), dtype=bool),
-            levels=levels[:, level_ch] if level_ch else None,
+            levels=family_levels,
             level_channels=np.asarray(level_ch) if level_ch else None,
         )
     return modalities, done
@@ -258,15 +323,21 @@ def assemble(
     window_root: Path | None = None,
     feature_root: Path | None = None,
     train_units=None,
+    levels: str = "relative",
+    force_mean: bool = False,
 ) -> TaskInputs:
     """Every modality, label and target of ``dataset`` for one sensor encoder and its arms.
     Rows whose sensor features are not cached are marked absent in every modality.
-    ``train_units`` (the fold's training units) is required for ``FOLD_BASELINE`` datasets."""
+    ``train_units`` (the fold's training units) is required for ``FOLD_BASELINE`` datasets;
+    ``levels`` is ``relative`` (default), ``both`` or ``absolute``; ``force_mean`` adds the
+    window mean of force channels to their level tokens."""
     store = WindowStore.open(dataset, window_root)
     root = Path(feature_root) if feature_root else interim_dir("features")
     if dataset not in FOLD_BASELINE:
         train_units = None  # the baseline does not depend on the fold
-    modalities, done = _sensor_modalities(store, encoder, arm_list, FeatureStore(root), train_units)
+    modalities, done = _sensor_modalities(
+        store, encoder, arm_list, FeatureStore(root), train_units, levels, force_mean
+    )
     if not modalities:
         raise ValueError(f"{dataset}: no {encoder} features for arms {arm_list}")
     if store.slow_channels:
@@ -292,11 +363,15 @@ def assemble(
         "encoder": encoder,
         "arms": list(arm_list),
         "window_store": store.key,
+        "levels": levels,
         "modalities": {
             m.name: {
                 "tokens": int(m.tokens.shape[1]),
                 "dim": m.dim,
                 "levels": 0 if m.levels is None else int(m.levels.shape[1]),
+                "level_features": (
+                    [] if m.levels is None else level_names(m.name, levels, force_mean)
+                ),
             }
             for m in modalities.values()
         },

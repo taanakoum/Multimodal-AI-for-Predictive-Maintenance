@@ -218,16 +218,6 @@ def obtain_file(
     return digest, "download"
 
 
-def download_file(
-    remote: RemoteFile,
-    destination: Path,
-    session: requests.Session | None = None,
-    seed: Path | None = None,
-) -> str:
-    """Download one file to ``destination`` (resumable); return its SHA-256."""
-    return obtain_file(remote, destination, session, seed)[0]
-
-
 def _read_manifest(path: Path) -> dict:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))

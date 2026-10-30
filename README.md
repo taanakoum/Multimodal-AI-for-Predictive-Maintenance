@@ -107,7 +107,7 @@ pdmfm/            package
   paths.py        data root and folders (PDMFM_DATA_ROOT)
   sources.py      dataset registry: URLs, hashes, licences, split lists
   fetch.py        resumable, hash-checked downloader; extract; verify
-  schema.py       Sample, ChannelWindow, ImageItem; as-of join of images to windows
+  schema.py       ImageItem and the as-of join of photos to windows
   preprocess.py   resampling, 5 kHz band limit, windows, T/F/E arms, descriptors, FPT, RUL
   resources.py    CPU/RAM guard and thread caps (SLURM-aware)
   datasets/       one reader per dataset
