@@ -275,6 +275,51 @@ def extract_images(dataset: str, encoder, root: Path | None = None, log=print) -
     return written
 
 
+def extract_image_views(
+    dataset: str, encoder, views: int = 4, seed: int = 0, root: Path | None = None, log=print
+) -> list[Path]:
+    """Augmented copies of every photo: ``images/<dataset>-<kind>-<encoder>views-<key>/``
+    with ``features.npy`` (views, n, tokens, dim) in the order of the photo cache's
+    ``paths.csv``. Used only to augment training (pdmfm.model.inputs.PhotoViews)."""
+    out_root = (Path(root) if root else interim_dir("features")) / "images"
+    written = []
+    for kind, paths in image_paths(dataset).items():
+        if not paths:
+            continue
+        signature = {
+            "dataset": dataset,
+            "kind": kind,
+            "encoder": encoder.signature(kind),
+            "paths": _hash(paths),
+            "views": views,
+            "seed": seed,
+            "augment": getattr(encoder, "AUGMENT", None),
+        }
+        folder = out_root / f"{dataset}-{kind}-{encoder.name}views-{_hash(signature)}"
+        if (folder / "meta.json").is_file():
+            log(f"[images] {dataset} {kind}: {views} views cached in {folder.name}")
+            written.append(folder)
+            continue
+        start = time.perf_counter()
+        files = [data_root() / p for p in paths]
+        tokens = np.stack(
+            [encoder.encode_paths(files, kind, augment_seed=(seed, v)) for v in range(1, views + 1)]
+        )
+        folder.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame({"path": paths}).to_csv(folder / "paths.csv", index=False)
+        save_npy_atomic(folder / "features.npy", tokens.astype(np.float16))
+        write_json_atomic(
+            folder / "meta.json",
+            {"signature": signature, "shape": list(tokens.shape), "complete": True},
+        )
+        log(
+            f"[images] {dataset} {kind}: {views} augmented views of {len(paths)} photos "
+            f"-> {tokens.shape} in {time.perf_counter() - start:.0f} s"
+        )
+        written.append(folder)
+    return written
+
+
 def extract_texts(
     encoder, datasets: list[str] | None = None, root: Path | None = None, log=print
 ) -> list[Path]:
@@ -361,6 +406,8 @@ def _cmd_images(args: argparse.Namespace) -> None:
     encoder = DinoV2Encoder(device=args.device)
     for dataset in args.dataset:
         extract_images(dataset, encoder)
+        if args.views:
+            extract_image_views(dataset, encoder, views=args.views)
 
 
 def _cmd_texts(args: argparse.Namespace) -> None:
@@ -395,6 +442,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=_cmd_extract)
     p = sub.add_parser("images", help="DINOv2 photo tokens")
     p.add_argument("--dataset", nargs="+", default=["nonastreda", "najafi_thermal"])
+    p.add_argument("--views", type=int, default=0, help="augmented copies per photo (training)")
     p.add_argument("--device", default="cpu")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=_cmd_images)

@@ -10,30 +10,31 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the audit pass (on top of `965d479`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 1 | Commit and push the image-fix and diagnostics pass (on top of `84f4add`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
 | 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), now with step 5: Plan B (§16). The §1 archive now also carries the photo tokens and text prototypes | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B with the Gate-1 winner and on Paderborn | about 2-3 h of your time over a few days, the rest is queue and compute |
 | 3 | Obtain PHM 2010 (manual download) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
+| 4 | Decisions E-G (section 4): MATWI, a second paper, C-MAPSS | The image pathway and RUL beyond Nonastreda and XJTU-SY | 5 min |
 | — | Decisions A-D taken (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479` | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add` | — | — |
 
 ---
 
-## 1. Commit and push the audit pass
+## 1. Commit and push the image-fix and diagnostics pass
 
-`965d479` ("Per Modality Expert Implementation") holds Plan B. This pass (decision D, the audit
-fixes, the cleanup and the docs) is not committed:
+`84f4add` ("Codebase Audit and Evaluation Suite") holds the audit. This pass is not committed:
+the tested photo options, learning diagnostics, RUL after FPT, pooled intervals,
+`pdmfm.tune`, `pdmfm.stats`, their tests and the docs.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb                  # modified modules, tests and docs; scripts/week1/ deleted
-git add -A                      # also stages the deletion of scripts/week1/ (superseded; PROJECT_LOG)
-git commit -m "Audit: interval calibration, metric and baseline fixes, cleanup"
+git status -sb                  # modified modules, tests and docs; new: pdmfm/stats.py, pdmfm/tune.py, 2 test files
+git add -A
+git commit -m "Image-shortage fixes tested, learning diagnostics, RUL after FPT, tuning, pooled intervals"
 git push
 ```
 
-`runs/` is git-ignored, so the local Plan B results stay out of the commit. The pre-commit
-hook runs ruff. Then open the repository's **Actions** tab and check that CI is green (lint,
-4 test legs, advisory pyright). If a job is red, paste its log.
+`runs/` is git-ignored, so the local results stay out of the commit. Then check that CI is
+green on GitHub (lint, 4 test legs, advisory pyright). If a job is red, paste its log.
 
 ---
 
@@ -61,14 +62,14 @@ show. In short:
 4. **Steps 2-3 (§13-§14):** the feature jobs, and the five PatchTST pretraining jobs with
    their feature jobs.
 5. **Step 4 (§15):** the Gate-1 probe on all four tasks.
-6. **Step 5 (§16): Plan B.** Read the Gate-1 winner with the §16.1 lines. Then submit the
-   §16.2 loop: Nonastreda, XJTU-SY and Paderborn with the winner and with the handcrafted
-   reference, plus a photo-free Nonastreda run. Check Paderborn's temperature as §16.3 says.
+6. **Step 5 (§16): Plan B.** Read the Gate-1 winner with the §16.1 lines, tune each
+   dataset on its validation units (§16.2), then submit the §16.3 loop: Nonastreda, XJTU-SY and Paderborn with the winner and with the handcrafted
+   reference, plus a photo-free Nonastreda run. Check Paderborn's temperature as §16.4 says.
 7. **Step 6 (§17):** download the caches and results (now with `runs/planb`), then tell me. I
    write up Gate 1 from `runs/gate1/gate1-v1/` and the Plan B tables from `runs/planb/`.
 
 If you run only part of the runbook before Gate 1 is final, Plan B can still run on Paderborn
-with Mantis (its caches come from §13): use `--encoder mantis --arms F` in the §16.2 loop and
+with Mantis (its caches come from §13): use `--encoder mantis --arms F` in the §16.2 and §16.3 loops and
 a run id such as `planb-mantis-paderborn`.
 
 ---
@@ -131,7 +132,17 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
 | C | **CWRU for pretraining and Gate 1 only**, never as evidence | No CWRU row in any result table; it stays one of Gate 1's four tasks and in the PatchTST corpus |
 | D | **Calibrated wear and RUL intervals** | Implemented: one scale factor on the predictive interval, fitted by NLL on the inner-validation units; every regression table shows `combined_calibrated` next to `combined` |
 
-No decision is open.
+### Open (2026-10-30)
+
+| | Decision | Recommendation |
+|---|---|---|
+| E | **Add MATWI** (KU Leuven): the only other public milling set that pairs a cutting-edge image with force, vibration and sound for every measurement. 17 tools run to failure, 1,578 paired measurements, wear in µm, C45 and 304 stainless, CC BY-SA 4.0, 17.7 GB. Its format was checked on one set (`PROJECT_LOG.md`, week 5). I download it and write the reader, window store and photo cache (about 1-2 days of my work) | **Yes.** It is the real fix for the image shortage: about 4 times Nonastreda's distinct photos, 1.7 times its tools, and an image-bearing transfer target for Goal 2 (Nonastreda ↔ MATWI). The KIT set the plan named has no photos at all |
+| F | **A second, short paper** on shortcuts in public predictive-maintenance data. The material exists: CWRU's recorder artifact, KAIST's session confound, Nonastreda's post-pass photos and persistence ceiling, Fz drift, metadata columns that identify classes | **Optional, after week 13.** A workshop paper at little extra cost |
+| G | **C-MAPSS** (turbofan run-to-failure, simulated, hundreds of engines) for RUL | **Not now.** The RUL weakness is the missing temporal context, not the number of datasets (`PROJECT_LOG.md`, week 5). Revisit only if RUL becomes a headline result |
+
+Kept dropped: battery data (outside the scope of rotating machinery and milling), LLM
+fine-tuning (no instruction data; it would conflict with trustworthy output), and the KIT CNC
+set (no photos and no wear labels).
 
 ---
 
@@ -146,7 +157,16 @@ No decision is open.
 If Gate 2 finds no candidate better than late aggregation on the validation units, Plan B
 becomes the model (plan, Gate 2), and weeks 8-9 pretrain its per-modality adapters instead.
 
-Carried into Gate 2 from the audit (`PROJECT_LOG.md`, week 5):
+Carried into Gate 2 from the audit and the tests of 2026-10-30 (`PROJECT_LOG.md`, week 5):
+- **Inner cross-validation for every option choice.** One validation tool per fold is too
+  noisy to choose options on Nonastreda (every option looked better on test units, none on
+  validation). Rotating the validation tool over the training tools needs about 7 times the
+  fits: a Ruche job.
+- **Temporal context for RUL.** A single snapshot cannot place a bearing on its degradation
+  path: after the first prediction time the error is 0.29 and the PHM 2012 score 0.20. Next: a
+  causal model over the past snapshots' embeddings, then the plan's TimesFM stage.
+- **The photo options** (older photos, augmented copies, modality dropout) re-tested under
+  inner cross-validation; modality dropout is part of every Gate-2 candidate anyway.
 - **A steadier interval calibration.** Fit decision D's scale on cross-fitted predictions of
   the training units (7-9 units instead of 1-3), because the current scale worsened XJTU-SY
   coverage.

@@ -27,6 +27,7 @@ def root(tmp_path_factory):
     root = tmp_path_factory.mktemp("planb")
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("PDMFM_DATA_ROOT", str(root))
+        mp.setattr(planb, "BOOTSTRAP_REPLICATES", 100)  # intervals are tested in test_stats
         build_planb_root(root)
         yield root
 
@@ -216,7 +217,8 @@ def test_run_writes_results_resumes_and_refuses_other_settings(root):
     messages = []
     out = run(root, "nonastreda", ("T", "F"), "resume", seeds=(0, 1))
     assert sorted(p.name for p in out.glob("fold*")) == [
-        "fold1-seed0.json", "fold1-seed0.npz", "fold1-seed1.json", "fold1-seed1.npz",
+        "fold1-seed0-bags.csv", "fold1-seed0.json", "fold1-seed0.npz",
+        "fold1-seed1-bags.csv", "fold1-seed1.json", "fold1-seed1.npz",
     ]  # fmt: skip
     stamp = (out / "fold1-seed0.json").stat().st_mtime_ns
     planb.run(
@@ -441,3 +443,116 @@ def test_slow_tokens_are_standardized_over_present_tokens(root):
         model.tokens_slow_mean.numpy()[0], slow.tokens[present, 0].mean(axis=0), rtol=1e-4,
         atol=1e-5,
     )  # fmt: skip
+
+
+# ----------------------------------------------------------------------------- options
+
+
+def test_photo_augmentation_samples_older_photos_in_training_only(nona):
+    rows = np.flatnonzero(nona.modalities["photo"].present)[:64]
+    rng = np.random.default_rng(0)
+    cfg = TrainConfig(photo_lags=3)
+    plain = batch(nona, rows, torch.device("cpu"))
+    mixed = batch(nona, rows, torch.device("cpu"), augment=(cfg, rng))
+    ages = mixed["photo"]["age"][:, 0]
+    assert set(ages.unique().tolist()) <= {0.0, 1.0, 2.0, 3.0} and (ages > 1).any()
+    torch.testing.assert_close(plain["photo"]["age"][:, 0], torch.ones(len(rows)))
+    # Rows keep their photo whenever some lag has one; tokens of lag 1 are the attached ones.
+    assert bool(mixed["photo"]["present"].all())
+    same = ages == 1
+    torch.testing.assert_close(mixed["photo"]["tokens"][same], plain["photo"]["tokens"][same])
+
+
+def test_modality_dropout_changes_only_the_combined_losses(nona):
+    torch.manual_seed(0)
+    model = LateEvidential(nona, d=16)
+    rows = np.flatnonzero(nona.modalities["photo"].present)[:32]
+    out = model(batch(nona, rows, torch.device("cpu")))
+    plain = _losses(out, nona, rows, 1.0, SMALL, 50.0, 20.0, "cpu")
+    torch.manual_seed(1)
+    dropped = _losses(
+        out, nona, rows, 1.0, TrainConfig(epochs=2, d=32, modality_dropout=0.9), 50.0, 20.0, "cpu"
+    )
+    assert float(dropped.detach()) != pytest.approx(float(plain.detach()))
+    # p = 1 still keeps one present modality per row: the losses stay finite.
+    torch.manual_seed(2)
+    all_dropped = _losses(
+        out, nona, rows, 1.0, TrainConfig(epochs=2, d=32, modality_dropout=1.0), 50.0, 20.0, "cpu"
+    )
+    assert torch.isfinite(all_dropped)
+
+
+def test_linear_head_option(nona):
+    model = LateEvidential(nona, d=16, head="linear")
+    out = outputs(model, nona, np.arange(8))
+    assert out["evidence"].shape == (8, 2, len(nona.classes))
+    with pytest.raises(ValueError, match="head must be"):
+        LateEvidential(nona, d=16, head="cosine")
+
+
+def test_history_tracks_the_fit_on_training_rows(nona):
+    split = protocols.nonastreda_fold(nona.manifest, 1)
+    fitted = fit(
+        nona, np.flatnonzero(split.train), np.flatnonzero(split.val), SMALL, seed=0, log=quiet
+    )
+    assert all({"train_score", "val_score", "loss"} <= set(h) for h in fitted.history)
+
+
+def test_results_hold_fit_staleness_and_bag_tables(root):
+    out = run(root, "nonastreda", ("T", "F"), "diagnostics", seeds=(0, 1))
+    result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))
+    assert {"bag", "window"} <= set(result["train"]["combined"])
+    assert {"photo_lag2", "photo_lag3"} <= set(result["test"])
+    assert {"photo_lag2", "photo_lag3"} <= set(result["test"]["regression"])
+    bags = pd.read_csv(out / "fold1-seed0-bags.csv")
+    manifest = load(root, "nonastreda", ("T", "F")).manifest
+    assert set(bags["unit"]) == {"T1", "T2"} and len(bags) == 12  # two tools x 6 passes
+    assert {"y_class", "pred_class", "persistence", "majority", "y_reg", "pred_reg"} <= set(bags)
+    passes = manifest.groupby("bag").head(1).set_index("bag")
+    np.testing.assert_array_equal(bags["y_reg"], passes.loc[bags["bag"], "wear_um"])
+    pooled = pd.read_csv(out / "pooled.csv").set_index("quantity")
+    assert {"macro-F1, model", "macro-F1, model - persistence", "RMSE, model"} <= set(pooled.index)
+    assert (pooled["low"] <= pooled["high"]).all()
+    text = (out / "summary.md").read_text(encoding="utf-8")
+    assert "## Pooled out-of-fold" in text and "Fit (bag level)" in text
+    assert "| photo_lag2 |" in text
+
+
+def test_rul_is_also_scored_after_the_first_prediction_time(root):
+    out = run(root, "xjtu_sy", ("F",), "post-fpt")
+    result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))
+    post = result["test"]["regression"]["combined"]["window"]["post_fpt"]
+    assert {"rmse", "coverage_90", "phm2012"} <= set(post)
+    assert post["n"] < result["test"]["regression"]["combined"]["window"]["n"]
+    pooled = pd.read_csv(out / "pooled.csv")
+    assert "RMSE after FPT, model" in set(pooled["quantity"])
+
+
+def test_command_line_options(root, tmp_path, monkeypatch):
+    monkeypatch.setenv("PDMFM_DATA_ROOT", str(root))
+    planb.main(
+        ["--dataset", "nonastreda", "--encoder", "stats", "--arms", "F", "--run-id", "options",
+         "--folds", "1", "--seeds", "0", "--epochs", "1", "--d", "16", "--lr", "3e-3",
+         "--modality-dropout", "0.3", "--photo-lags", "3", "--head", "linear",
+         "--out", str(tmp_path), "--force"]
+    )  # fmt: skip
+    train = json.loads((tmp_path / "options" / "fold1-seed0.json").read_text())["settings"]["train"]
+    assert (train["d"], train["lr"], train["modality_dropout"]) == (16, 3e-3, 0.3)
+    assert (train["photo_lags"], train["head"]) == (3, "linear")
+
+
+def test_projected_head_starts_at_the_text_prototypes_and_can_separate_them(nona):
+    from pdmfm.model.layers import PrototypeEvidentialHead
+
+    prototypes = torch.from_numpy(nona.prototypes)
+    head = PrototypeEvidentialHead(16, prototypes, text_rank=4)
+    torch.testing.assert_close(head.class_vectors(), head.prototypes)  # W_t = I at the start
+    with torch.no_grad():
+        head.text_up.normal_()
+    moved = head.class_vectors()
+    torch.testing.assert_close(moved.norm(dim=-1), torch.ones(len(prototypes)))
+    assert not torch.allclose(moved, head.prototypes)
+    model = LateEvidential(nona, d=16, head="projected")
+    params = sum(p.numel() for p in model.class_heads["force"].parameters())
+    plain = sum(p.numel() for p in LateEvidential(nona, d=16).class_heads["force"].parameters())
+    assert params - plain == 2 * 16 * nona.prototypes.shape[1]  # rank-16 A and B only

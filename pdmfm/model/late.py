@@ -20,7 +20,12 @@ from torch import nn
 
 from pdmfm.losses import ds_combine_all, nig_fuse_all
 from pdmfm.model.inputs import TaskInputs
-from pdmfm.model.layers import ModalityEncoder, NIGHead, PrototypeEvidentialHead
+from pdmfm.model.layers import (
+    LinearEvidentialHead,
+    ModalityEncoder,
+    NIGHead,
+    PrototypeEvidentialHead,
+)
 
 
 def _standardizer(values: np.ndarray, rows, mask: np.ndarray | None = None):
@@ -41,7 +46,12 @@ def _standardizer(values: np.ndarray, rows, mask: np.ndarray | None = None):
 
 class LateEvidential(nn.Module):
     def __init__(
-        self, inputs: TaskInputs, d: int = 256, dropout: float = 0.1, train_rows=None
+        self,
+        inputs: TaskInputs,
+        d: int = 256,
+        dropout: float = 0.1,
+        train_rows=None,
+        head: str = "prototype",
     ) -> None:
         super().__init__()
         self.names = list(inputs.modalities)
@@ -79,7 +89,13 @@ class LateEvidential(nn.Module):
                 stats = _standardizer(modality.tokens, train_rows, modality.token_present)
                 self._buffers_from(f"tokens_{name}", stats)
             if prototypes is not None:
-                self.class_heads[name] = PrototypeEvidentialHead(d, prototypes)
+                if head == "linear":
+                    self.class_heads[name] = LinearEvidentialHead(d, len(prototypes))
+                elif head in ("prototype", "projected"):
+                    rank = 16 if head == "projected" else 0
+                    self.class_heads[name] = PrototypeEvidentialHead(d, prototypes, rank)
+                else:
+                    raise ValueError(f"head must be prototype, projected or linear, not {head!r}")
             if inputs.y_reg is not None:
                 self.reg_heads[name] = NIGHead(d)
 

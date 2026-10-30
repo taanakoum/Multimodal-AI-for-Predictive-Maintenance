@@ -63,10 +63,11 @@ GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 
 ```powershell
 python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda      # 1: window stores (model input, labels, contexts)
 python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda --encoder mantis --arms T F E
-python -m pdmfm.features images                                  # 2: DINOv2 photo tokens
+python -m pdmfm.features images --views 4                       # 2: DINOv2 photo tokens (+ augmented copies)
 python -m pdmfm.features texts                                   #    Qwen3 contexts and class prototypes
 python -m pdmfm.patchtst --fold 1 --device cuda                  #    own PatchTST, per outer fold (Ruche)
 python -m pdmfm.probe --run-id gate1 --candidates mantis:T mantis:T+E moment:T ...   # 3: Gate 1
+python -m pdmfm.tune --dataset nonastreda --encoder mantis --arms F --run-id tune-nona --grid lr=3e-4,1e-3 d=128,256
 python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona     # 4: Plan B
 python -m pdmfm.features status                                  # what is cached
 ```
@@ -82,8 +83,11 @@ python -m pdmfm.features status                                  # what is cache
 - **Stage 4.** Plan B, the baseline and fallback model: one evidential expert per modality
   (force, vibration, current, slow channels, photos), with text-anchored class heads and NIG
   regression heads. Experts are combined by Dempster's rule (classes) and MoNIG (wear, RUL),
-  and temperature-scaled on inner-validation units. It runs over 5 outer folds × 3 seeds,
-  with per-modality, missing-modality and baseline results (`runs/planb/<run-id>/summary.md`).
+  and calibrated on inner-validation units (temperature; interval scale). It runs over 5
+  outer folds × 3 seeds, with per-modality, missing-modality, stale-photo and baseline
+  results, the fit on the training units, and pooled out-of-fold estimates with 95 %
+  intervals from resampling test units (`runs/planb/<run-id>/summary.md`).
+  `pdmfm.tune` chooses hyperparameters on the inner-validation units only.
 - **Ruche.** MOMENT, AST and PatchTST at full scale run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
 
 ## Heavy jobs and Ruche
@@ -124,6 +128,8 @@ pdmfm/            package
   model/          per-modality token sets from the caches (inputs.py), encoders and heads (layers.py), Plan B (late.py)
   train.py        supervised training on cached features: losses, checkpoint selection, bag aggregation
   planb.py        stage 4: Plan B over outer folds and seeds; summary tables
+  tune.py         hyperparameter search on inner-validation units
+  stats.py        pooled out-of-fold statistics: macro-F1, RMSE, unit bootstrap intervals
 tests/            pytest suite (synthetic data; real-data, checkpoint, acceptance and network tests are marked)
 scripts/eda/      exploratory data analysis
 scripts/ci/       local CI reproduction, data-source check

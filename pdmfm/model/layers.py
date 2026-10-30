@@ -85,22 +85,50 @@ class ModalityEncoder(nn.Module):
 
 
 class PrototypeEvidentialHead(nn.Module):
+    """``text_rank`` > 0 adds the plan's learned text projection W_t (p_c = W_t Qwen(c)) in
+    low-rank form, W_t = I + A B with rank ``text_rank``: it starts at the Qwen prototypes
+    and lets near-parallel ones (cosine up to 0.99) move apart; weight decay pulls it back
+    towards the text."""
+
     prototypes: torch.Tensor  # (K, text width) buffer, L2-normalized
 
-    def __init__(self, d: int, prototypes: torch.Tensor) -> None:
+    def __init__(self, d: int, prototypes: torch.Tensor, text_rank: int = 0) -> None:
         super().__init__()
         self.register_buffer("prototypes", nn.functional.normalize(prototypes.float(), dim=-1))
         self.project = nn.Linear(d, prototypes.shape[1], bias=False)
         self.log_scale = nn.Parameter(torch.tensor(math.log(10.0)))
         self.bias = nn.Parameter(torch.zeros(prototypes.shape[0]))
+        self.text_rank = text_rank
+        if text_rank:
+            width = prototypes.shape[1]
+            self.text_down = nn.Parameter(torch.randn(width, text_rank) / math.sqrt(width))
+            self.text_up = nn.Parameter(torch.zeros(text_rank, width))
+
+    def class_vectors(self) -> torch.Tensor:
+        """(K, text width) class directions: the prototypes, through W_t if learned."""
+        p = self.prototypes
+        if self.text_rank:
+            p = nn.functional.normalize(p + (p @ self.text_down) @ self.text_up, dim=-1)
+        return p
 
     def logits(self, z: torch.Tensor) -> torch.Tensor:
         q = nn.functional.normalize(self.project(z), dim=-1)
-        return self.log_scale.exp() * q @ self.prototypes.T + self.bias
+        return self.log_scale.exp() * q @ self.class_vectors().T + self.bias
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """Evidence (B, K) >= 0."""
         return nn.functional.softplus(self.logits(z))
+
+
+class LinearEvidentialHead(nn.Module):
+    """Free linear class head (no text prototypes): a diagnostic of what text anchoring costs."""
+
+    def __init__(self, d: int, n_classes: int) -> None:
+        super().__init__()
+        self.linear = nn.Linear(d, n_classes)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return nn.functional.softplus(self.linear(z))
 
 
 class NIGHead(nn.Module):

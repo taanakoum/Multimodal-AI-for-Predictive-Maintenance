@@ -2,7 +2,7 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-10-29)
+## Status at a glance (updated 2026-10-30)
 
 | Area | State |
 | --- | --- |
@@ -11,7 +11,7 @@ This is the running record of tasks, progress, findings, implementations and dec
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (manual download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
-| Needs you | `docs/USER_ACTIONS.md`: commit and push week 5; run the Ruche runbook (now with Plan B); PHM 2010. Decisions A-D taken |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push the audit and test pass; run the Ruche runbook (Plan B now tuned first, §16.2); PHM 2010; decisions E (MATWI), F (second paper), G (C-MAPSS) |
 
 ## Week 1 — setup, downloads and verification
 
@@ -549,3 +549,163 @@ Reading (paired tests over the 15 fold-seed pairs; Wilcoxon):
 | CI reproduced in fresh Python 3.11 and 3.12 environments | 290 passed, 46 skipped on both; coverage 85 %; pyright 0 errors |
 | ruff, pre-commit on every new, changed and removed file | Clean; all hooks pass |
 | New or changed tests in this pass | Decision D (interval scale recovers a known factor; calibrated widths are the raw ones times the factor); classes present in macro-F1; level modes and the force mean; standardization with training rows only; KAIST refusal; the `meta_*` guard. `test_schema` reduced to the as-of join |
+
+## Week 5, continued (2026-10-30): the image shortage, learning diagnostics, RUL, tuning and statistics
+
+### The image shortage: sources checked
+
+| Source | What it really holds | Verdict |
+| --- | --- | --- |
+| KIT "Multimodal Dataset for Process Monitoring and Anomaly Detection in Industrial CNC Milling" (RADAR, DOI 10.35097/hvvwn1kfwf7qt48z), the KIT set the plan named | Force (Kistler 9255C) and spindle acceleration at 10 kHz, controller signals at 500 Hz, NC code, CAD; 33 experiments, 8 anomaly types; CC BY 4.0; 44.6 GB. **No tool photos and no per-sample wear labels** | The plan's description ("signals + labelled pictures") was wrong. It would not ease the image shortage; it stays dropped |
+| **MATWI** (KU Leuven, De Pauw et al. 2023; DOI 10.48804/GK6LHH) | 17 carbide milling tools (single insert, z = 1) run to failure; 1,803 rows, **1,578 with both a cutting-edge image and a sensor recording**. Five channels at a regular 1,637 Hz (accelerometer, microphone, Fx, Fy, Fz), 55.6 s per recording. Images 5,496 × 3,672 JPG, with crop boxes per set. Expert wear in µm (15-750) and wear type (flank, adhesion, both). Materials C45 (as Nonastreda) and 304 stainless; cutting parameters per tool; CC BY-SA 4.0; 17.7 GB. Each image is taken after its recording, so the previous-pass as-of join applies unchanged | **Recommended** (decision E): a second paired image-sensor milling set, with 1.7 times Nonastreda's tools and 4 times its distinct photos; an image-bearing transfer target |
+| ExtraDrey (TUHH, 2026) | Longitudinal **turning**; forces, acceleration, acoustic emission, temperature; microscope images in 3 views every 30 s; VB_max in µm; public domain; very large (one archive is 7.4 GB) | Optional later, as a cross-process target; turning is outside the milling scope |
+| ImageBind (Meta, CVPR 2023) | One embedding space bound to images for image, text, audio, depth, thermal and IMU. The IMU encoder takes 6 channels × 2,000 steps (Ego4D head-worn IMU), audio 128 mel × 204 frames, thermal 1 × 224 × 224; vision ViT-H (1,280 wide, 32 blocks); weights CC BY-NC 4.0 | Not adopted. Kilohertz vibration does not fit its IMU input (the fault content would have to be decimated away), and it binds modalities to natural-image scenes, never to machine states. Its idea, contrastive binding of each modality to a hub, is already the plan's cross-modal InfoNCE and text anchoring. Its audio and vision towers could at most be extra Gate-1 or photo candidates |
+
+### Run folders
+
+`runs/planb/exp-base` is the reference run with the current code (defaults; fit, staleness,
+per-bag and pooled outputs). `exp-*` are its variants. `planb-nona-*` hold the same defaults
+from the previous code version (no per-bag or pooled outputs); `planb-xjtu-*` were rerun with
+the current code. Pre-audit runs are in `runs/planb-superseded-2026-10-29/`.
+
+### Fixes 1-7 for the image shortage, tested
+
+Rule fixed before any run: an option becomes a default only if, on the inner-validation
+units, it raises the mean selection score by at least 0.01 and wins at least 9 of the 15
+paired fold-seed runs. Test units are reported, never used to decide. Every run is Nonastreda,
+Mantis F + photos, 5 folds × 3 seeds, compared with `exp-base` (the defaults).
+
+| # | Fix | Implemented as | Validation selection score (base 0.619) | Test macro-F1 (base 0.775) | Without photo, validation / test (base 0.414 / 0.405) | Decision |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Photos of older passes in training | `--photo-lags 3`; photo age now counted in passes | 0.612 (8/15 wins) | 0.800 | 0.462 / 0.402 | Option, off |
+| 2 | Augmented photo copies | `features images --views 4`, `--photo-views` | 0.626 (11/15) | 0.801 | 0.455 / 0.417 | Option, off (+0.007 < 0.01) |
+| 3 | Modality dropout | `--modality-dropout 0.3` on the combined losses | 0.604 (4/15) | 0.787 | 0.448 / 0.460 | Option, off; belongs to Gate 2, which ranks robustness |
+| 1-3 | All three | | 0.617 (10/15) | 0.791 | 0.464 / 0.436 | Off |
+| 4 | Same-pass photo pairs for pretraining | Deferred to the pretraining stage (weeks 8-9): it can only be judged there | – | – | – | Planned |
+| 5 | A second paired dataset | MATWI verified (above); KIT has no photos | – | – | – | Decision E |
+| 6 | Search for more image datasets | MATWI, ExtraDrey found; KIT corrected | – | – | – | Done |
+| 7 | Honest scope | Photos are an in-domain milling modality; every image result is shown against persistence and with stale photos | – | – | – | Adopted |
+
+Staleness test (base run): macro-F1 0.775 with the previous pass's photos, 0.768 with photos
+two passes old, 0.718 three passes old. The photo's value decays with its age, as it should.
+
+**A limit of the method, found here.** Every variant scores slightly *higher* than the base on
+the pooled test units (macro-F1 0.81-0.82 against 0.80; photo lags: model − persistence
++0.043 [+0.003, +0.079]), while the validation units do not see it. Nonastreda's inner
+validation is one tool per fold, too noisy to choose options. Using the test gains would be
+selection on test, so the defaults stay; Gate 2 needs inner cross-validation (several
+validation tools per fold; about 7 times the fits, a Ruche job).
+
+### Can the model learn? (the OmniFuser plateau at about 0.65)
+
+| Epoch | 1 | 5 | 10 | 20 | 30 | 50 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Training-row score (`exp-base`) | 0.24 | 0.68 | 0.75 | 0.84 | 0.89 | 0.93 |
+| Validation score | 0.14 | **0.56** | 0.53 | 0.48 | 0.46 | 0.50 |
+
+The model keeps improving on its training data (score 0.93 at epoch 50; at the selected
+epoch, training-unit macro-F1 0.87 against 0.78 on test units). No plateau: the limit is
+generalization from 7 training tools, and validation peaks around epoch 5. XJTU-SY: training
+RMSE 0.109 against 0.176 on test bearings.
+
+**The class head.** A free linear head (`--head linear`), against the text-anchored head,
+lifts the force expert alone from 0.414 to 0.511 on validation (12/15 wins, p = 0.005) and
+from 0.405 to 0.455 on test, while the combined model hardly changes (0.625 against 0.619).
+The near-parallel Qwen prototypes (cosine 0.90-0.94 here) handicap the weaker expert. The
+plan's learned text projection W_t, in low rank (`--head projected`, rank 16, starting at
+the prototypes), does not recover it in Plan B (0.610; force alone 0.428): training stops
+around epoch 5, before W_t moves. Text anchoring stays (it carries the zero-shot goal); W_t
+belongs to the pretraining stage, with many datasets and long training.
+
+**Would more tools help?** Learning curve, Plan B fitted on 3, 5 or all 7 training tools of
+each fold (5 folds, one seed; `runs/learning-curve/`):
+
+| Training tools | 3 | 5 | 7 |
+| --- | --- | --- | --- |
+| With photos: test macro-F1 | 0.719 | 0.765 | 0.777 |
+| With photos: test wear RMSE (µm) | 23.4 | 24.2 | 23.6 |
+| Force only: test macro-F1 | 0.459 | 0.450 | 0.465 |
+| Force only: test wear RMSE (µm) | 34.4 | 36.9 | 35.1 |
+
+The photo pathway still improves with more tools (flattening), so more image-bearing tools
+(MATWI) should help it. The force pathway is flat from 3 to 7 tools: its limit is the
+information in the force features, not the amount of data. That is a question for the final
+Gate 1 (MOMENT, AST, own PatchTST), not for more Nonastreda tools.
+
+### RUL: what the new metrics show
+
+XJTU-SY now reports the error after the first prediction time (where normalized RUL leaves
+1, the degradation phase that matters) next to the error over all snapshots:
+
+| Run | RMSE, all snapshots | RMSE after FPT | PHM 2012, all / after FPT | 90 % coverage after FPT, raw → calibrated |
+| --- | --- | --- | --- | --- |
+| Mantis F + E | 0.176 ± 0.086 | 0.286 ± 0.077 | 0.664 / 0.195 | 0.51 → 0.57 |
+| Handcrafted F + E | 0.176 ± 0.088 | 0.286 ± 0.084 | 0.664 / 0.219 | 0.56 → 0.54 |
+| Training mean | 0.300 | 0.478 (pooled) | – | – |
+
+Pooled out of fold (Mantis): RMSE after FPT 0.315 [0.229, 0.356] against 0.478 [0.440,
+0.499] for the training mean. The overall RMSE hides that the model mostly separates
+"healthy" from "degrading": a single 1-second snapshot carries no trend, so the model cannot
+place a bearing on its degradation path. RUL needs temporal context (a causal model over the
+past snapshots' embeddings, then the plan's TimesFM stage on a health indicator); that is
+the next RUL step, carried into Gate 2.
+
+### Hyperparameters, chosen on validation units only
+
+`pdmfm.tune` (grid d ∈ {64, 256} × dropout ∈ {0.1, 0.3}; 5 folds, one seed; near-ties within
+one standard error of the paired fold-wise differences go to the smaller model):
+
+| Dataset | Chosen | Mean validation score (others) |
+| --- | --- | --- |
+| Nonastreda | d = 256, dropout 0.1 (the defaults) | 0.619 (d 256 / 0.3: 0.616, tie; d 64: 0.603 and 0.590, worse) |
+| XJTU-SY | d = 64, dropout 0.1 | 0.419 (d 256 / 0.1: 0.424, tie; the cheaper wins) |
+
+The first version of the near-tie rule used the unpaired spread across folds (fold 2 scores
+about 0.07, the others about 0.8), which made every configuration a tie; it was corrected to
+the paired differences before the choice above. Smaller or more regularized models do not
+cure the tool-to-tool overfitting; more tools does (above).
+
+### Statistics in every summary
+
+Each run now writes a per-bag table (`fold<k>-seed<s>-bags.csv`) and `pooled.csv`. The
+summary pools every test unit once per seed, averages the seeds and gives 95 % intervals by
+resampling whole test units, plus the model's difference to each baseline. Nonastreda
+(`exp-base`): macro-F1 0.802 [0.744, 0.851] against persistence 0.779 [0.703, 0.847];
+difference +0.023 [−0.038, +0.066]. Wear: model 25.8 µm against persistence 22.7 µm;
+difference +3.1 [−0.6, +5.8].
+
+### Re-audit after these changes
+
+| # | Finding | Action |
+| --- | --- | --- |
+| 15 | Photo ages were synthetic seconds | Now passes since capture; the staleness test is real |
+| 16 | The KIT set in the plan holds no photos and no wear labels | Corrected (plan amendment); MATWI verified instead |
+| 17 | The text-anchored head costs the weaker expert about 0.1 macro-F1 on validation (near-parallel prototypes) | Linear and low-rank W_t heads tested; text anchoring kept; W_t moves to pretraining |
+| 18 | Results treated fold × seed runs as independent | Pooled out-of-fold estimates with unit-bootstrap intervals; the paired p-values of the comparison script are only indicative |
+| 19 | RUL metrics were dominated by the flat pre-FPT part | Scored after FPT as well |
+| 20 | One validation tool per fold cannot choose options | Inner cross-validation for Gate 2 (Ruche) |
+| 21 | The same validation units choose the epoch, the calibration and the hyperparameters | Validation scores are optimistic; test units stay untouched, which is what matters |
+| 22 | The tuner's first near-tie rule ignored that configurations share folds | Paired differences |
+| 23 | The laptop slept during two runs (7,600 s and 25,000 s fits) | Timing fields are not used in any analysis; long runs belong on Ruche or with sleep disabled |
+| 24 | The pooled bootstrap took 48 s per summary | NumPy columns: 8 s; tests use 100 replicates |
+
+### The ideas dropped on 2026-10-23, reconsidered
+
+| Idea | Verdict |
+| --- | --- |
+| KIT CNC milling | Stays dropped: no photos, no wear labels |
+| MATWI (new) | Recommended: decision E |
+| NASA milling | Already local; the fallback of decision A |
+| C-MAPSS | Not now: the RUL limit is temporal context, not datasets (decision G) |
+| Battery data | Stays dropped: outside the scope |
+| A second paper | Optional (decision F): the shortcut findings make a short workshop paper |
+| LLM fine-tuning | Stays dropped: no grounded instruction data; template cards stay |
+
+### Verification of this pass
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | 334 passed, 25 skipped (5 network, 4 Paderborn/PHM 2010 acceptance, 16 Linux-only SLURM tests) |
+| CI reproduced in fresh Python 3.11 and 3.12 environments | 309 passed, 46 skipped; coverage 86 %. Pyright in the fresh environment (newer pandas stubs) found one finding the project environment did not, in the RUL check of `pooled_summary`; fixed, then 0 errors |
+| ruff, pre-commit on every new and changed file | Clean; all hooks pass |
+| New tests | `test_stats` (4), `test_tune` (3); photo views and lags (`test_inputs`, 2); augmented-view cache and seeded augmentation (`test_features`, 2); options, fit diagnostics, staleness, per-bag tables, pooled intervals, RUL after FPT, the projected head, the command line (`test_planb`, 9) |

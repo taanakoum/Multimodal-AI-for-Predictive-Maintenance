@@ -320,16 +320,37 @@ class DinoV2Encoder:
         rows, cols = self.GRID[kind]
         return 1 + rows * cols
 
-    def _pixels(self, path: Path, kind: str) -> np.ndarray:
-        from PIL import Image
+    # Augmented copies (fix 2 of the image plan, PROJECT_LOG week 5): a crop keeping 80-100 %
+    # of each side, brightness and contrast within ±15 %, and mirroring for chips and
+    # workpieces only (a mirrored end mill is not a real tool view).
+    AUGMENT = {"crop": (0.8, 1.0), "jitter": 0.15, "mirror": ("chip", "workpiece", "thermal")}
+
+    def _pixels(self, path: Path, kind: str, rng: np.random.Generator | None = None) -> np.ndarray:
+        from PIL import Image, ImageEnhance, ImageOps
 
         height, width = self.SIZE[kind]
         with Image.open(path) as image:
-            image = image.convert("RGB").resize((width, height), Image.Resampling.BICUBIC)
+            image = image.convert("RGB")
+            if rng is not None:
+                low, high = self.AUGMENT["crop"]
+                w, h = image.size
+                cw, ch = int(w * rng.uniform(low, high)), int(h * rng.uniform(low, high))
+                left, top = int(rng.integers(0, w - cw + 1)), int(rng.integers(0, h - ch + 1))
+                image = image.crop((left, top, left + cw, top + ch))
+                jitter = self.AUGMENT["jitter"]
+                image = ImageEnhance.Brightness(image).enhance(rng.uniform(1 - jitter, 1 + jitter))
+                image = ImageEnhance.Contrast(image).enhance(rng.uniform(1 - jitter, 1 + jitter))
+                if kind in self.AUGMENT["mirror"] and rng.random() < 0.5:
+                    image = ImageOps.mirror(image)
+            image = image.resize((width, height), Image.Resampling.BICUBIC)
             array = np.asarray(image, dtype=np.float32).transpose(2, 0, 1) / 255.0
         return (array - self.MEAN) / self.STD
 
-    def encode_paths(self, paths: list[Path], kind: str) -> np.ndarray:
+    def encode_paths(
+        self, paths: list[Path], kind: str, augment_seed: tuple[int, ...] | None = None
+    ) -> np.ndarray:
+        """Tokens of each photo; with ``augment_seed``, of an augmented copy that depends
+        only on the seed and the photo's position."""
         import torch
 
         height, width = self.SIZE[kind]
@@ -337,8 +358,18 @@ class DinoV2Encoder:
         out = []
         with torch.no_grad():
             for start in range(0, len(paths), self.batch_size):
+                chunk = range(start, min(start + self.batch_size, len(paths)))
                 pixels = np.stack(
-                    [self._pixels(p, kind) for p in paths[start : start + self.batch_size]]
+                    [
+                        self._pixels(
+                            paths[i],
+                            kind,
+                            None
+                            if augment_seed is None
+                            else np.random.default_rng((*augment_seed, i)),
+                        )
+                        for i in chunk
+                    ]
                 )
                 hidden = self.model(
                     pixel_values=torch.from_numpy(pixels).to(self.device)

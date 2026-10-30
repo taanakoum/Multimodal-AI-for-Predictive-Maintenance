@@ -514,13 +514,30 @@ arms T E`. Keep `{fold}` as it is: Plan B then uses fold k's own PatchTST on fol
 did. Nonastreda has no E arm. If the winner's arms are E only, use `--arms F` for Nonastreda
 (its best arm in Gate 1).
 
-**16.2 Submit** (one GPU job per dataset, then the handcrafted reference and a photo-free
-Nonastreda run):
+**16.2 Tune on the inner-validation units** (one GPU job per dataset; it never reads test
+units):
 
 ```bash
 for dataset in nonastreda xjtu_sy paderborn; do
+  sbatch --job-name=tune-$dataset --time=04:00:00 slurm/job.sbatch \
+    python -m pdmfm.tune --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id tune-v1-$dataset --grid d=64,256 dropout=0.1,0.3 lr=3e-4,1e-3 --device cuda
+done
+```
+
+Each writes `runs/tune/tune-v1-<dataset>/best.json`: the chosen settings, the ranking, and
+the flags for Plan B. Near-ties (within one standard error of the paired fold-wise
+differences) go to the smaller model. On the laptop, the same search chose the defaults for
+Nonastreda and d = 64 for XJTU-SY (`PROJECT_LOG.md`, week 5).
+
+**16.3 Submit Plan B** with the tuned flags (one GPU job per dataset), then the handcrafted
+reference and a photo-free Nonastreda run:
+
+```bash
+for dataset in nonastreda xjtu_sy paderborn; do
+  FLAGS=$(python -c "import json; print(json.load(open('runs/tune/tune-v1-$dataset/best.json'))['flags'])")
+  echo "$dataset: $FLAGS"
   sbatch --job-name=planb-$dataset --time=02:00:00 slurm/job.sbatch \
-    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-$dataset --device cuda
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-$dataset $FLAGS --device cuda
   sbatch --job-name=planb-$dataset-stats --time=02:00:00 slurm/job.sbatch \
     python -m pdmfm.planb --dataset $dataset --encoder stats --arms F E --run-id planb-v1-$dataset-stats --device cuda
 done
@@ -554,7 +571,7 @@ sbatch --job-name=planb-nonastreda-nophoto --time=02:00:00 slurm/job.sbatch \
   modality, and the majority, persistence and training-mean baselines. Every fold and seed
   is in `fold<k>-seed<s>.json`, with the test predictions in `.npz` beside it.
 
-**16.3 Check Paderborn's temperature.** In `runs/planb/planb-v1-paderborn/summary.md`, look
+**16.4 Check Paderborn's temperature.** In `runs/planb/planb-v1-paderborn/summary.md`, look
 at the `only_slow` row: the temperature alone. On KAIST, temperature followed the recording
 session, not the fault (EDA finding 2). If temperature alone reaches a macro-F1 near the
 full model's, it probably reflects the session here too. Then run Paderborn again without it:
@@ -576,7 +593,7 @@ needs a new run id.
 Pack on Ruche (small; the login node is fine):
 
 ```bash
-cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/planb runs/logs
+cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz
@@ -674,5 +691,5 @@ After the §10 block, from `$WORKDIR/pdmfm`:
 | 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder stats --arms T F E` and the §13 loop |
 | 3 | The §14 loop |
 | 4 | The §15 command |
-| 5 | §16.1 (winner), then the §16.2 loop |
+| 5 | §16.1 (winner), the §16.2 tuning loop, then the §16.3 Plan B loop |
 | 6 | §17 |

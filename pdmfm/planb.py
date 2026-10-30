@@ -37,7 +37,8 @@ import torch
 
 from pdmfm import losses, protocols
 from pdmfm import metrics as M
-from pdmfm.model.inputs import FOLD_BASELINE, LEVEL_MODES, TaskInputs, assemble
+from pdmfm import stats as S
+from pdmfm.model.inputs import FOLD_BASELINE, LEVEL_MODES, MAX_PHOTO_LAG, TaskInputs, assemble
 from pdmfm.paths import REPO_ROOT
 from pdmfm.train import TrainConfig, bag_mean, fit, predict
 from pdmfm.utils import stable_hash, write_json_atomic
@@ -120,6 +121,16 @@ def _regression(
         out = M.regression(target, mean, dof, scale * interval)
         if inputs.regression_target == "rul":
             out["phm2012"] = M.phm2012_score(target, np.clip(mean, 0.0, 1.0))
+            # Normalized RUL is 1 until the first prediction time: the degradation phase is
+            # where the prognosis matters, so it is scored on its own as well.
+            post = target < 1.0 - 1e-6
+            if post.any():
+                out["post_fpt"] = M.regression(
+                    target[post], mean[post], dof[post], scale[post] * interval
+                )
+                out["post_fpt"]["phm2012"] = M.phm2012_score(
+                    target[post], np.clip(mean[post], 0.0, 1.0)
+                )
         return out
 
     _, bag_nig = bag_mean(nig[keep], bags)
@@ -153,7 +164,10 @@ def evaluate(
     y_std: float,
     temperature: float | None,
     interval_scale: float | None = None,
+    stale: dict[int, dict] | None = None,
 ) -> dict:
+    """Every result variant of one part. ``stale`` maps a photo lag to the predictions made
+    with the photos of that many passes back (the staleness test)."""
     names = list(inputs.modalities)
     result: dict = {"trust": _trust(pred, names)}
     if "combined" in pred:
@@ -189,66 +203,115 @@ def evaluate(
                 result["regression"][f"without_{name}"] = _regression(
                     inputs, rows, again["fused_nig"], y_mean, y_std
                 )
+    for lag, older in (stale or {}).items():
+        if "combined" in older:
+            result[f"photo_lag{lag}"] = _classes(inputs, rows, older["combined"])
+        if "fused_nig" in older:
+            result["regression"][f"photo_lag{lag}"] = _regression(
+                inputs, rows, older["fused_nig"], y_mean, y_std
+            )
     return result
 
 
-def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray) -> dict:
-    """Majority class and training mean; persistence (previous bag of the same unit, in
-    time order) where bags follow each other (Nonastreda passes, XJTU-SY snapshots)."""
-    manifest = inputs.manifest
+def _fit_summary(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std: float) -> dict:
+    """The combined prediction scored on training rows: does the model fit its data?"""
     out: dict = {}
-    first = manifest.iloc[test_rows].groupby("bag", sort=False).head(1)
-    time_key = (
-        "meta_t_start"
-        if "meta_t_start" in manifest
-        else "meta_minute"
-        if "meta_minute" in manifest
-        else None
-    )
-    ordered = first.sort_values(["unit", time_key]) if time_key else None
-    if inputs.y_class is not None:
-        y_train = inputs.y_class[train_rows]
-        y_train = y_train[y_train >= 0]
-        k = len(inputs.classes)
-        prior = np.bincount(y_train, minlength=k) / max(len(y_train), 1)
-        labels = inputs.y_class[first.index.to_numpy()]
-        keep = labels >= 0
-        out["majority"] = M.classification(labels[keep], np.tile(prior, (int(keep.sum()), 1)))
-        if ordered is not None:
-            y = inputs.y_class[ordered.index.to_numpy()]
-            previous = ordered.groupby("unit")["class_key"].shift(1)
-            index = {c: i for i, c in enumerate(inputs.classes)}
-            guess = np.array(
-                [
-                    index.get(p, int(prior.argmax())) if isinstance(p, str) else int(prior.argmax())
-                    for p in previous
-                ]
-            )
-            keep = y >= 0
-            out["persistence"] = M.classification(y[keep], np.eye(k)[guess[keep]])
-    if inputs.y_reg is not None:
-        y_train = inputs.y_reg[train_rows]
-        mean = float(np.nanmean(y_train))
-        y = inputs.y_reg[first.index.to_numpy()]
-        keep = np.isfinite(y)
-        out["train_mean"] = {
-            "rmse": float(np.sqrt(np.mean((y[keep] - mean) ** 2))),
-            "mae": float(np.mean(np.abs(y[keep] - mean))),
+    if "combined" in pred:
+        out["combined"] = _classes(inputs, rows, pred["combined"])
+    if "fused_nig" in pred:
+        out["regression"] = {
+            "combined": _regression(inputs, rows, pred["fused_nig"], y_mean, y_std)
         }
-        if ordered is not None and inputs.regression_target == "wear_um":
-            y = inputs.y_reg[ordered.index.to_numpy()]
-            previous = (
-                pd.Series(y, index=ordered.index)
-                .groupby(ordered["unit"].to_numpy())
-                .shift(1)
-                .fillna(mean)
-                .to_numpy()
-            )
-            keep = np.isfinite(y)
-            out["persistence_regression"] = {
-                "rmse": float(np.sqrt(np.mean((y[keep] - previous[keep]) ** 2))),
-                "mae": float(np.mean(np.abs(y[keep] - previous[keep]))),
-            }
+    return out
+
+
+def _bag_predictions(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std: float):
+    """Per test bag: the combined class (argmax of the mean evidence) and wear or RUL (mean
+    NIG location); calibration changes neither."""
+    bags = inputs.manifest["bag"].astype(str).to_numpy()[rows]
+    table = pd.DataFrame({"bag": pd.unique(bags)})
+    if "combined" in pred:
+        keys, evidence = bag_mean(pred["combined"], bags)
+        table["pred_class"] = (
+            pd.Series(_probs(evidence).argmax(1), index=keys).loc[table["bag"]].to_numpy()
+        )
+    if "fused_nig" in pred:
+        keys, nig = bag_mean(pred["fused_nig"], bags)
+        mean = nig[:, 0] * y_std + y_mean
+        table["pred_reg"] = pd.Series(mean, index=keys).loc[table["bag"]].to_numpy()
+    return table
+
+
+def baseline_table(
+    inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray
+) -> pd.DataFrame:
+    """One row per test bag (in time order per unit where bags follow each other: Nonastreda
+    passes, XJTU-SY snapshots): its unit and labels, and the majority, persistence and
+    training-mean predictions. Persistence is the previous bag's true label or wear of the
+    same unit; a unit's first bag falls back to the training majority or mean."""
+    manifest = inputs.manifest
+    first = manifest.iloc[test_rows].groupby("bag", sort=False).head(1)
+    time_key = next((k for k in ("meta_t_start", "meta_minute") if k in manifest), None)
+    if time_key:
+        first = first.sort_values(["unit", time_key])
+    index = first.index.to_numpy()
+    table = pd.DataFrame(
+        {"bag": first["bag"].astype(str).to_numpy(), "unit": first["unit"].astype(str).to_numpy()}
+    )
+    if inputs.y_class is not None:
+        prior = _prior(inputs, train_rows)
+        table["y_class"] = inputs.y_class[index]
+        table["majority"] = int(prior.argmax())
+        if time_key:
+            positions = {c: i for i, c in enumerate(inputs.classes)}
+            previous = first.groupby("unit")["class_key"].shift(1)
+            table["persistence"] = [
+                positions.get(p, int(prior.argmax())) if isinstance(p, str) else int(prior.argmax())
+                for p in previous
+            ]
+    if inputs.y_reg is not None:
+        mean = float(np.nanmean(inputs.y_reg[train_rows]))
+        y = inputs.y_reg[index]
+        table["y_reg"] = y
+        table["train_mean"] = mean
+        if time_key and inputs.regression_target == "wear_um":
+            previous = pd.Series(y).groupby(table["unit"].to_numpy()).shift(1)
+            table["persistence_reg"] = previous.fillna(mean).to_numpy()
+    return table
+
+
+def _prior(inputs: TaskInputs, train_rows: np.ndarray) -> np.ndarray:
+    assert inputs.y_class is not None
+    y = inputs.y_class[train_rows]
+    y = y[y >= 0]
+    return np.bincount(y, minlength=len(inputs.classes)) / max(len(y), 1)
+
+
+def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray) -> dict:
+    """Majority class, persistence and training mean, scored on the test bags."""
+    table = baseline_table(inputs, train_rows, test_rows)
+    out: dict = {}
+    if "y_class" in table:
+        keep = (table["y_class"] >= 0).to_numpy()
+        y = table["y_class"].to_numpy()[keep]
+        prior = _prior(inputs, train_rows)
+        out["majority"] = M.classification(y, np.tile(prior, (len(y), 1)))
+        if "persistence" in table:
+            guess = table["persistence"].to_numpy()[keep]
+            out["persistence"] = M.classification(y, np.eye(len(inputs.classes))[guess])
+    if "y_reg" in table:
+        y = table["y_reg"].to_numpy()
+        keep = np.isfinite(y)
+        for name, column in (
+            ("train_mean", "train_mean"),
+            ("persistence_regression", "persistence_reg"),
+        ):
+            if column in table:
+                error = y[keep] - table[column].to_numpy()[keep]
+                out[name] = {
+                    "rmse": float(np.sqrt(np.mean(error**2))),
+                    "mae": float(np.mean(np.abs(error))),
+                }
     return out
 
 
@@ -273,7 +336,7 @@ def _calibrate(inputs: TaskInputs, val_rows, val_pred: dict, y_mean: float, y_st
     return temperature, interval
 
 
-def _prepare(dataset, encoder, arm_list, cfg, train_units, options: dict, log):
+def prepare_inputs(dataset, encoder, arm_list, cfg, train_units, options: dict, log):
     """(inputs, settings, settings key, rows with any modality present) for one encoder.
     ``options`` holds :func:`run`'s photos, without, levels, force_mean, window_root and
     feature_root;
@@ -346,7 +409,7 @@ def run(
         if prepared is None or per_fold:
             train_units = sorted(split.units(manifest, "train"))
             encoder_k = encoder.replace("{fold}", str(fold))
-            prepared = _prepare(dataset, encoder_k, arm_list, cfg, train_units, options, log)
+            prepared = prepare_inputs(dataset, encoder_k, arm_list, cfg, train_units, options, log)
         inputs, settings, key, any_present = prepared
         labelled = any_present.copy()
         if inputs.y_class is not None:
@@ -370,6 +433,16 @@ def run(
             y_mean, y_std = fitted.y_mean, fitted.y_std
             temperature, interval = _calibrate(inputs, val_rows, val_pred, y_mean, y_std)
             test_pred = predict(fitted.model, inputs, test_rows, cfg)
+            photo = inputs.modalities.get("photo")
+            stale = (
+                {
+                    lag: predict(fitted.model, inputs, test_rows, cfg, photo_lag=lag)
+                    for lag in range(2, MAX_PHOTO_LAG + 1)
+                }
+                if photo is not None and photo.views is not None
+                else None
+            )
+            train_pred = predict(fitted.model, inputs, train_rows, cfg)
             trainable = sum(p.numel() for p in fitted.model.parameters() if p.requires_grad)
             result = {
                 "dataset": dataset,
@@ -385,11 +458,17 @@ def run(
                 "n_params": int(trainable),
                 "validation": evaluate(inputs, val_rows, val_pred, y_mean, y_std, None),
                 "test": evaluate(
-                    inputs, test_rows, test_pred, y_mean, y_std, temperature, interval
+                    inputs, test_rows, test_pred, y_mean, y_std, temperature, interval, stale
                 ),
+                "train": _fit_summary(inputs, train_rows, train_pred, y_mean, y_std),
                 "baselines": baselines(inputs, train_rows, test_rows),
                 "history": fitted.history,
             }
+            bags = baseline_table(inputs, train_rows, test_rows).merge(
+                _bag_predictions(inputs, test_rows, test_pred, y_mean, y_std), on="bag"
+            )
+            bags.insert(0, "fold", fold)
+            bags.to_csv(out / f"fold{fold}-seed{seed}-bags.csv", index=False)
             np.savez_compressed(out / f"fold{fold}-seed{seed}.npz", rows=test_rows, **test_pred)
             write_json_atomic(path, result)
     summarize(out)
@@ -414,6 +493,7 @@ def summarize(out: Path) -> pd.DataFrame:
             "",
             {
                 "test": result["test"],
+                "train": result.get("train", {}),
                 "baselines": result["baselines"],
                 "temperature": result["temperature"],
                 "interval_scale": result.get("interval_scale"),
@@ -426,8 +506,96 @@ def summarize(out: Path) -> pd.DataFrame:
     table = pd.DataFrame(rows)
     summary = pd.DataFrame({"mean": table.mean(), "std": table.std(ddof=0), "runs": table.count()})
     summary.to_csv(out / "summary.csv")
-    (out / "summary.md").write_text(_markdown(out.name, summary, len(rows)), encoding="utf-8")
+    pooled = pooled_summary(out)
+    if len(pooled):
+        pooled.to_csv(out / "pooled.csv", index=False)
+    (out / "summary.md").write_text(
+        _markdown(out.name, summary, len(rows), pooled), encoding="utf-8"
+    )
     return summary
+
+
+BOOTSTRAP_REPLICATES = 2000
+
+
+def pooled_summary(out: Path, n: int | None = None) -> pd.DataFrame:
+    """Pooled out-of-fold bag predictions of each seed, with 95 % confidence intervals from
+    resampling test units (:mod:`pdmfm.stats`): the model, the baselines and the
+    differences."""
+    by_seed: dict[int, list[pd.DataFrame]] = {}
+    for path in sorted(out.glob("fold*-seed*-bags.csv")):
+        seed = int(path.stem.split("-seed")[1].split("-")[0])
+        by_seed.setdefault(seed, []).append(pd.read_csv(path))
+    if not by_seed:
+        return pd.DataFrame()
+    tables = [pd.concat(parts, ignore_index=True) for parts in by_seed.values()]
+    columns = set(tables[0].columns)
+    quantities: list[tuple[str, object]] = []
+
+    def f1_of(column):
+        def statistic(f):
+            keep = f["y_class"] >= 0
+            return S.macro_f1(f["y_class"][keep], f[column][keep])
+
+        return statistic
+
+    def rmse_of(column, after_fpt=False):
+        def statistic(f):
+            keep = f["y_reg"] < 1 - 1e-6 if after_fpt else slice(None)
+            return S.rmse(f["y_reg"][keep], f[column][keep])
+
+        return statistic
+
+    def difference(a, b):
+        return lambda f: a(f) - b(f)
+
+    if {"y_class", "pred_class"} <= columns:
+        f1 = {
+            name: f1_of(column)
+            for name, column in (
+                ("model", "pred_class"),
+                ("persistence", "persistence"),
+                ("majority", "majority"),
+            )
+            if column in columns
+        }
+        quantities += [(f"macro-F1, {name}", fn) for name, fn in f1.items()]
+        quantities += [
+            (f"macro-F1, model - {name}", difference(f1["model"], fn))
+            for name, fn in f1.items()
+            if name != "model"
+        ]
+    if {"y_reg", "pred_reg"} <= columns:
+        error = {
+            name: rmse_of(column)
+            for name, column in (
+                ("model", "pred_reg"),
+                ("persistence", "persistence_reg"),
+                ("training mean", "train_mean"),
+            )
+            if column in columns
+        }
+        quantities += [(f"RMSE, {name}", fn) for name, fn in error.items()]
+        quantities += [
+            (f"RMSE, model - {name}", difference(error["model"], fn))
+            for name, fn in error.items()
+            if name != "model"
+        ]
+        y = tables[0]["y_reg"].to_numpy(dtype=float)
+        if bool(np.any(y < 1 - 1e-6)) and float(np.nanmax(y)) <= 1.0:  # normalized RUL
+            quantities += [
+                ("RMSE after FPT, model", rmse_of("pred_reg", after_fpt=True)),
+                ("RMSE after FPT, training mean", rmse_of("train_mean", after_fpt=True)),
+            ]
+    records = []
+    for name, statistic in quantities:
+        estimate, low, high = S.unit_bootstrap(
+            tables,
+            statistic,  # pyright: ignore[reportArgumentType]
+            n=n or BOOTSTRAP_REPLICATES,
+        )
+        records.append({"quantity": name, "estimate": estimate, "low": low, "high": high})
+    return pd.DataFrame(records)
 
 
 def _cell(summary: pd.DataFrame, key: str, digits: int = 3) -> str:
@@ -441,7 +609,9 @@ def _row(summary: pd.DataFrame, label: str, keys: list[str | None]) -> str:
     return "| " + " | ".join([label] + [_cell(summary, k) if k else "-" for k in keys]) + " |"
 
 
-def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
+def _markdown(
+    run_id: str, summary: pd.DataFrame, runs: int, pooled: pd.DataFrame | None = None
+) -> str:
     keys = sorted(
         {k.split(".")[1] for k in summary.index if k.startswith("test.") and k.count(".") >= 3}
     )
@@ -458,6 +628,17 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
     ]
     if fitted:
         lines += [f"Calibration fitted on the inner-validation units: {'; '.join(fitted)}.", ""]
+    fit_lines = [
+        f"{what}: training units {_cell(summary, f'train.{key}')}, test units "
+        f"{_cell(summary, f'test.{key}')}"
+        for what, key in (
+            ("macro-F1", "combined.bag.macro_f1"),
+            ("RMSE", "regression.combined.bag.rmse"),
+        )
+        if f"train.{key}" in summary.index
+    ]
+    if fit_lines:
+        lines += ["Fit (bag level): " + "; ".join(fit_lines) + ".", ""]
     class_rows = [k for k in keys if f"test.{k}.bag.macro_f1" in summary.index]
     if class_rows:
         lines += [
@@ -494,6 +675,13 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
             base = f"test.regression.{k}.bag"
             names = ("rmse", "mae", "nll", "coverage_90", "width_90", "phm2012")
             lines.append(_row(summary, k, [f"{base}.{n}" for n in names]))
+            if (
+                k in ("combined", "combined_calibrated")
+                and f"{base}.post_fpt.rmse" in summary.index
+            ):
+                lines.append(
+                    _row(summary, f"{k}, after FPT", [f"{base}.post_fpt.{n}" for n in names])
+                )
         for name in ("train_mean", "persistence_regression"):
             base = f"baselines.{name}"
             if f"{base}.rmse" in summary.index:
@@ -510,6 +698,22 @@ def _markdown(run_id: str, summary: pd.DataFrame, runs: int) -> str:
         lines += ["## Trust (test windows)", ""] + [
             f"- {k.removeprefix('test.trust.')}: {_cell(summary, k)}" for k in trust
         ]
+        lines.append("")
+    if pooled is not None and len(pooled):
+        lines += [
+            "## Pooled out-of-fold, bag level",
+            "",
+            "Every test unit once per seed; seeds averaged; 95 % interval from resampling "
+            "whole test units (tools, bearings) 2,000 times.",
+            "",
+            "| Quantity | Estimate | 95 % interval |",
+            "| --- | --- | --- |",
+        ]
+        for row in pooled.to_dict("records"):
+            lines.append(
+                f"| {row['quantity']} | {row['estimate']:.3f} | "
+                f"[{row['low']:.3f}, {row['high']:.3f}] |"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -531,6 +735,24 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=256)
+    defaults = TrainConfig()
+    parser.add_argument("--lr", type=float, default=defaults.lr)
+    parser.add_argument("--d", type=int, default=defaults.d, help="model width")
+    parser.add_argument("--dropout", type=float, default=defaults.dropout)
+    parser.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
+    parser.add_argument(
+        "--modality-dropout", type=float, default=0.0, help="drop modalities from the combination"
+    )
+    parser.add_argument(
+        "--photo-lags", type=int, default=1, help="train on photos up to this many passes back"
+    )
+    parser.add_argument("--photo-views", action="store_true", help="train on augmented photos")
+    parser.add_argument(
+        "--head",
+        default="prototype",
+        choices=("prototype", "projected", "linear"),
+        help="class head: Qwen prototypes, prototypes through a learned W_t, or free linear",
+    )
     parser.add_argument("--no-photos", action="store_true", help="sensor modalities only")
     parser.add_argument(
         "--without",
@@ -557,7 +779,19 @@ def main(argv: list[str] | None = None) -> None:
 
         # A run peaks at about 0.6 GB (Nonastreda with photos, d = 256).
         claim_resources("planb", min_idle_cpus=2.0, min_free_ram_gb=1.0, force=args.force)
-    cfg = TrainConfig(epochs=args.epochs, batch_size=args.batch_size, device=args.device)
+    cfg = TrainConfig(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        d=args.d,
+        dropout=args.dropout,
+        weight_decay=args.weight_decay,
+        modality_dropout=args.modality_dropout,
+        photo_lags=args.photo_lags,
+        photo_views=args.photo_views,
+        head=args.head,
+        device=args.device,
+    )
     started = time.perf_counter()
     out = run(
         args.dataset,

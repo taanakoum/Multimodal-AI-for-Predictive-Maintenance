@@ -8,6 +8,12 @@
   inner-validation score: the mean of bag-level macro-F1 and 1 - RMSE / std of the target.
 * Bag aggregation (plan): a pass, cut or recording gets the mean evidence (classes) and the
   mean NIG parameters (regression) of its windows.
+* Options, all off by default and kept only where the inner-validation units showed a gain
+  (PROJECT_LOG.md, week 5): modality dropout on the combined losses (``modality_dropout``),
+  photos of the 2nd and 3rd previous passes (``photo_lags``) and augmented photo copies
+  (``photo_views``) sampled per row in training, and a free linear class head (``head``).
+* Every epoch also scores a fixed sample of training rows (``train_score`` in the history),
+  so a run shows whether the model fits its training units or not.
 """
 
 from __future__ import annotations
@@ -35,28 +41,63 @@ class TrainConfig:
     dropout: float = 0.1
     kl_epochs: int = 10  # KL weight min(1, epoch / kl_epochs)
     nig_regularizer: float = 0.01
+    modality_dropout: float = 0.0  # drop each modality from the combined losses
+    photo_lags: int = 1  # train on photos of up to this many passes back
+    photo_views: bool = False  # train on augmented photo copies as well
+    head: str = "prototype"  # "projected" (learned W_t) or "linear" (no text; diagnostic)
     device: str = "cpu"
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
+def _photo_choice(views, rows: np.ndarray, cfg: TrainConfig, rng: np.random.Generator):
+    """A random lag (among those with a photo, up to ``cfg.photo_lags``) and view per row."""
+    available = views.available_lags(rows)[:, : max(1, cfg.photo_lags)]
+    lags = np.ones(len(rows), dtype=np.int64)
+    for i in np.flatnonzero(available.any(axis=1)):
+        lags[i] = 1 + rng.choice(np.flatnonzero(available[i]))
+    n_views = views.n_views if cfg.photo_views else 1
+    return lags, rng.integers(0, n_views, len(rows))
+
+
 def batch(
-    inputs: TaskInputs, rows: np.ndarray, device: torch.device, drop: tuple[str, ...] = ()
+    inputs: TaskInputs,
+    rows: np.ndarray,
+    device: torch.device,
+    drop: tuple[str, ...] = (),
+    photo_lag: int = 1,
+    augment: tuple[TrainConfig, np.random.Generator] | None = None,
 ) -> dict:
-    """The model input of ``rows``; modalities in ``drop`` are marked absent."""
+    """The model input of ``rows``; modalities in ``drop`` are marked absent. Photos come
+    from ``photo_lag`` passes back, or, with ``augment``, from a random lag and view."""
     out = {}
     for name, m in inputs.modalities.items():
+        tokens, token_present, age, present = m.tokens[rows], m.token_present, m.age, m.present
+        if m.views is not None and (augment is not None or photo_lag != 1):
+            if augment is None:
+                lags = np.full(len(rows), photo_lag, dtype=np.int64)
+                choice = np.zeros(len(rows), dtype=np.int64)
+            else:
+                lags, choice = _photo_choice(m.views, rows, *augment)
+            tokens, token_present, age = m.views.tokens(rows, lags, choice)
+            # A photo k passes back exists only where the previous pass's does, so the
+            # lag-1 mask (which also drops rows without cached features) still applies.
+            present = token_present.any(axis=1) & present[rows]
+        else:
+            token_present = None if token_present is None else token_present[rows]
+            age = None if age is None else age[rows]
+            present = present[rows]
         part = {
-            "tokens": torch.from_numpy(np.ascontiguousarray(m.tokens[rows])).to(device),
-            "present": torch.from_numpy(m.present[rows] & (name not in drop)).to(device),
+            "tokens": torch.from_numpy(np.ascontiguousarray(tokens)).to(device),
+            "present": torch.from_numpy(present & (name not in drop)).to(device),
         }
-        if m.token_present is not None:
-            part["token_present"] = torch.from_numpy(m.token_present[rows]).to(device)
+        if token_present is not None:
+            part["token_present"] = torch.from_numpy(token_present).to(device)
         if m.levels is not None:
             part["levels"] = torch.from_numpy(np.ascontiguousarray(m.levels[rows])).to(device)
-        if m.age is not None:
-            part["age"] = torch.from_numpy(m.age[rows]).to(device)
+        if age is not None:
+            part["age"] = torch.from_numpy(age).to(device)
         out[name] = part
     return out
 
@@ -83,6 +124,19 @@ def _losses(
 ):
     total = torch.zeros((), device=device)
     present = out["present"]  # (B, M)
+    combined, fused = out.get("combined"), out.get("fused_nig")
+    if cfg.modality_dropout > 0 and present.shape[1] > 1:
+        # Drop modalities from the combination only (each expert keeps its own loss), never
+        # all present ones: the combined opinion must also learn to stand on fewer experts.
+        keep = present & (torch.rand(present.shape, device=device) >= cfg.modality_dropout)
+        lost = present.any(1) & ~keep.any(1)
+        if lost.any():
+            pick = torch.multinomial(present[lost].float(), 1).squeeze(1)
+            keep[lost] = torch.nn.functional.one_hot(pick, present.shape[1]).bool()
+        if "evidence" in out:
+            combined = losses.ds_combine_all(out["evidence"] * keep.unsqueeze(-1))[0]
+        if "nig" in out:
+            fused = losses.nig_fuse_all(out["nig"], keep)
     if "evidence" in out and inputs.y_class is not None:
         y = torch.from_numpy(inputs.y_class[rows]).to(device)
         labelled = y >= 0
@@ -95,7 +149,8 @@ def _losses(
                         out["evidence"][labelled, m][here], yl[here], annealing
                     )
                     total = total + per_row.mean()
-            total = total + losses.tmc_loss(out["combined"][labelled], yl, annealing).mean()
+            assert combined is not None  # present whenever the model gives evidence
+            total = total + losses.tmc_loss(combined[labelled], yl, annealing).mean()
     if "nig" in out and inputs.y_reg is not None:
         y = torch.from_numpy(((inputs.y_reg[rows] - y_mean) / y_std).astype(np.float32)).to(device)
         labelled = torch.isfinite(y)
@@ -106,9 +161,8 @@ def _losses(
                 if here.any():
                     nig = out["nig"][labelled, m][here]
                     total = total + losses.nig_loss(nig, yl[here], cfg.nig_regularizer).mean()
-            total = (
-                total + losses.nig_loss(out["fused_nig"][labelled], yl, cfg.nig_regularizer).mean()
-            )
+            assert fused is not None  # present whenever the model gives NIG outputs
+            total = total + losses.nig_loss(fused[labelled], yl, cfg.nig_regularizer).mean()
     return total
 
 
@@ -119,13 +173,15 @@ def predict(
     rows: np.ndarray,
     cfg: TrainConfig,
     drop: tuple[str, ...] = (),
+    photo_lag: int = 1,
 ) -> dict:
-    """Numpy outputs for ``rows``: evidence, combined, conflict, nig, fused_nig, present."""
+    """Numpy outputs for ``rows``: evidence, combined, conflict, nig, fused_nig, present.
+    ``photo_lag`` > 1 gives the photos of an older pass (the staleness test)."""
     model.eval()
     device = torch.device(cfg.device)
     collected: dict[str, list] = {}
     for start in range(0, len(rows), 1024):
-        out = model(batch(inputs, rows[start : start + 1024], device, drop))
+        out = model(batch(inputs, rows[start : start + 1024], device, drop, photo_lag))
         for key in ("evidence", "combined", "conflict", "nig", "fused_nig", "present"):
             if key in out:
                 collected.setdefault(key, []).append(out[key].cpu().numpy())
@@ -180,7 +236,9 @@ def fit(
     device = torch.device(cfg.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
-    model = LateEvidential(inputs, d=cfg.d, dropout=cfg.dropout, train_rows=train_rows).to(device)
+    model = LateEvidential(
+        inputs, d=cfg.d, dropout=cfg.dropout, train_rows=train_rows, head=cfg.head
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     y_mean, y_std = 0.0, 1.0
     if inputs.y_reg is not None:
@@ -189,6 +247,9 @@ def fit(
         if len(y):
             y_mean, y_std = float(y.mean()), float(y.std()) or 1.0
     best, best_state, best_epoch, history = -np.inf, None, 0, []
+    # A fixed sample of training rows, scored every epoch like the validation rows.
+    probe = np.sort(rng.choice(train_rows, min(512, len(train_rows)), replace=False))
+    augment = (cfg, rng) if (cfg.photo_lags > 1 or cfg.photo_views) else None
     started = time.perf_counter()
     for epoch in range(cfg.epochs):
         model.train()
@@ -197,7 +258,7 @@ def fit(
         running = 0.0
         for start in range(0, len(order), cfg.batch_size):
             rows = order[start : start + cfg.batch_size]
-            out = model(batch(inputs, rows, device))
+            out = model(batch(inputs, rows, device, augment=augment))
             loss = _losses(out, inputs, rows, annealing, cfg, y_mean, y_std, device)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -206,7 +267,17 @@ def fit(
         score = selection_score(
             inputs, val_rows, predict(model, inputs, val_rows, cfg), y_mean, y_std
         )
-        history.append({"epoch": epoch + 1, "loss": running / len(order), "val_score": score})
+        fit_score = selection_score(
+            inputs, probe, predict(model, inputs, probe, cfg), y_mean, y_std
+        )
+        history.append(
+            {
+                "epoch": epoch + 1,
+                "loss": running / len(order),
+                "train_score": fit_score,
+                "val_score": score,
+            }
+        )
         if score > best:
             best, best_epoch, best_state = score, epoch + 1, copy.deepcopy(model.state_dict())
     if best_state is not None:

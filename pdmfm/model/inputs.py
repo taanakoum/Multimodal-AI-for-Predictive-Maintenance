@@ -24,8 +24,11 @@ with the window store's manifest:
   and slope minus the same baseline, embedded by a small MLP (plan, "Slow token"); always
   relative, because absolute temperature identifies the recording session (EDA F3).
 * **Photos** (Nonastreda): the DINOv2 tokens of the previous pass's tool, chip and workpiece
-  photos attached by the as-of join, with their age; a pass without photos is a missing
-  modality (mask false), never zeros.
+  photos attached by the as-of join; a pass without photos is a missing modality (mask
+  false), never zeros. Their age is counted in passes (the seconds between passes are not
+  recorded). :class:`PhotoViews` also holds, for training augmentation and the staleness
+  test, the photos of the 2nd and 3rd previous passes and augmented DINOv2 copies of each
+  photo (``python -m pdmfm.features images --views 4``).
 * **Targets:** class index in the dataset's label space (Qwen prototypes from the text cache)
   and the regression target (wear in µm, normalized RUL), NaN where absent.
 
@@ -53,6 +56,7 @@ from pdmfm.windows import WindowStore
 ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "slow")
 ROLE = {name: i for i, name in enumerate(ROLES)}
 PHOTO_KINDS = ("tool", "chip", "workpiece")
+MAX_PHOTO_LAG = 3  # photos of up to the 3rd previous pass
 NO_LEVEL = {"nonastreda": ("fz",)}  # Fz drifts by block (EDA F10)
 DC_FAMILIES = ("force",)  # channels whose window mean ``force_mean`` adds
 LEVEL_MODES = ("relative", "both", "absolute")
@@ -70,12 +74,51 @@ class Modality:
     token_present: np.ndarray | None = None  # (N, T) bool, None: all tokens present
     levels: np.ndarray | None = None  # (N, L, F) level descriptors (see ``level_names``)
     level_channels: np.ndarray | None = None  # (L,) channel index of each level token
-    age: np.ndarray | None = None  # (N, T) seconds since capture (photos)
+    age: np.ndarray | None = None  # (N, T) passes since capture (photos)
     descriptor: bool = False  # tokens are small descriptor vectors (slow channels)
+    views: PhotoViews | None = None  # alternative photo token sets (photos only)
 
     @property
     def dim(self) -> int:
         return int(self.tokens.shape[-1])
+
+
+@dataclass
+class PhotoViews:
+    """Photo tokens of other passes and augmented copies, looked up per row on demand.
+
+    ``banks[j]`` is (V, n_photos, T_j, D) for photo kind j: view 0 is the photo itself, views
+    1.. are augmented DINOv2 copies. ``index`` is (MAX_PHOTO_LAG, N, kinds): the bank row of
+    the photo taken after the (lag)-th previous pass, or -1."""
+
+    banks: list[np.ndarray]
+    index: np.ndarray
+
+    @property
+    def n_views(self) -> int:
+        return int(self.banks[0].shape[0])
+
+    def available_lags(self, rows: np.ndarray) -> np.ndarray:
+        """(len(rows), MAX_PHOTO_LAG) bool: some photo of that lag exists."""
+        return np.transpose((self.index[:, rows] >= 0).any(axis=2))
+
+    def tokens(self, rows: np.ndarray, lags: np.ndarray, views: np.ndarray):
+        """(tokens (B, T, D), token_present (B, T), age (B, T)) for each row's lag (1-based)
+        and view."""
+        blocks, present, ages = [], [], []
+        for j, bank in enumerate(self.banks):
+            photo = self.index[lags - 1, rows, j]
+            have = photo >= 0
+            block = np.zeros((len(rows),) + bank.shape[2:], dtype=np.float32)
+            block[have] = bank[views[have], photo[have]]
+            blocks.append(block)
+            present.append(np.repeat(have[:, None], bank.shape[2], axis=1))
+            ages.append(np.repeat(np.where(have, lags, 0)[:, None], bank.shape[2], axis=1))
+        return (
+            np.concatenate(blocks, axis=1),
+            np.concatenate(present, axis=1),
+            np.concatenate(ages, axis=1).astype(np.float32),
+        )
 
 
 @dataclass
@@ -266,36 +309,73 @@ def _image_cache(root: Path, dataset: str, kind: str) -> tuple[list[str], np.nda
     return paths, np.load(folder / "features.npy", mmap_mode="r")
 
 
+def _view_cache(root: Path, dataset: str, kind: str, paths: list[str]) -> np.ndarray | None:
+    """Augmented copies (V, n, T, D) of the photo cache, if extracted for the same photos."""
+    folders = sorted(
+        (root / "images").glob(f"{dataset}-{kind}-dinov2views-*/meta.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not folders:
+        return None
+    folder = folders[-1].parent
+    if pd.read_csv(folder / "paths.csv")["path"].astype(str).tolist() != paths:
+        raise ValueError(f"{folder.name} was extracted for other photos; extract the views again")
+    return np.load(folder / "features.npy", mmap_mode="r")
+
+
+def lagged_photo_index(manifest: pd.DataFrame, kind: str, index: dict[str, int]) -> np.ndarray:
+    """(MAX_PHOTO_LAG, N) cache row of the photo taken after the k-th previous pass, or -1.
+
+    A pass's windows carry the previous pass's photo (the as-of join), so the photo k passes
+    back is the one carried by the pass k - 1 positions earlier on the same tool."""
+    out = np.full((MAX_PHOTO_LAG, len(manifest)), -1, dtype=np.int64)
+    attached = manifest[f"image_{kind}"].astype(str).to_numpy()
+    by_bag = manifest.groupby("bag", sort=False)
+    first = by_bag.head(1)
+    for _, passes in first.sort_values(["unit", "meta_t_start"]).groupby("unit", sort=False):
+        bags = passes["bag"].tolist()
+        photos = [index.get(str(attached[i]), -1) for i in passes.index]
+        for position, bag in enumerate(bags):
+            rows = by_bag.indices[bag]
+            for lag in range(1, MAX_PHOTO_LAG + 1):
+                source = position - (lag - 1)
+                if source >= 0:
+                    out[lag - 1, rows] = photos[source]
+    return out
+
+
 def _photo_modality(store: WindowStore, root: Path) -> Modality:
     manifest = store.manifest
-    blocks, roles, present_tokens, ages = [], [], [], []
+    banks, lag_index, roles = [], [], []
     for kind in PHOTO_KINDS:
         paths, features = _image_cache(root, store.dataset, kind)
         index = {p: i for i, p in enumerate(paths)}
         wanted = manifest[f"image_{kind}"].astype(str).to_numpy()
-        rows = np.array([index.get(p, -1) for p in wanted])
-        missing = rows < 0
-        unknown = missing & (wanted != "")
+        unknown = np.array([p != "" and p not in index for p in wanted])
         if unknown.any():
             raise ValueError(
                 f"{int(unknown.sum())} attached {kind} photos are not in the photo cache"
             )
-        tokens = np.zeros((len(manifest), features.shape[1], features.shape[2]), dtype=np.float32)
-        tokens[~missing] = np.asarray(features[rows[~missing]], dtype=np.float32)
-        blocks.append(tokens)
+        views = _view_cache(root, store.dataset, kind, paths)
+        bank = np.asarray(features, dtype=np.float32)[None]
+        if views is not None:
+            bank = np.concatenate([bank, np.asarray(views, dtype=np.float32)], axis=0)
+        banks.append(bank)
+        lag_index.append(lagged_photo_index(manifest, kind, index))
         roles += [ROLE[kind]] * features.shape[1]
-        present_tokens.append(np.repeat(~missing[:, None], features.shape[1], axis=1))
-        age = manifest[f"age_{kind}"].to_numpy(dtype=float)
-        ages.append(np.repeat(np.nan_to_num(age)[:, None], features.shape[1], axis=1))
-    token_present = np.concatenate(present_tokens, axis=1)
+    photo_views = PhotoViews(banks=banks, index=np.stack(lag_index, axis=2))
+    rows = np.arange(len(manifest))
+    ones = np.ones(len(manifest), dtype=np.int64)
+    tokens, token_present, age = photo_views.tokens(rows, ones, np.zeros_like(ones))
     return Modality(
         name="photo",
-        tokens=np.concatenate(blocks, axis=1),
+        tokens=tokens,
         roles=np.asarray(roles),
         channels=np.zeros(len(roles), dtype=int),
         present=np.asarray(np.any(token_present, axis=1)),
         token_present=token_present,
-        age=np.concatenate(ages, axis=1).astype(np.float32),
+        age=age,
+        views=photo_views,
     )
 
 

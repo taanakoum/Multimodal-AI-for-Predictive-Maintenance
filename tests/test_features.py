@@ -203,3 +203,46 @@ def test_status_lists_photo_caches_as_complete(tmp_path, monkeypatch, cache):
     features.extract_images("nonastreda", FakeImageEncoder(), root=cache.root, log=quiet)
     row = cache.status().iloc[0]
     assert (row["arm"], row["done"], row["windows"], row["complete"]) == ("photo:tool", 1, 1, True)
+
+
+class FakeViewEncoder(FakeImageEncoder):
+    """Tokens record the augmentation seed, so the cache layout can be checked."""
+
+    def encode_paths(self, paths, kind, augment_seed=None):
+        value = 0.0 if augment_seed is None else float(augment_seed[1])
+        return np.full((len(paths), 5, 8), value, dtype=np.float32)
+
+
+def test_augmented_photo_views_cache(tmp_path, monkeypatch, cache):
+    monkeypatch.setenv("PDMFM_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(features, "image_paths", lambda d: {"tool": ["raw/a.png", "raw/b.png"]})
+    (folder,) = features.extract_image_views(
+        "nonastreda", FakeViewEncoder(), views=3, root=cache.root, log=quiet
+    )
+    assert "views" in folder.name
+    stored = np.load(folder / "features.npy")
+    assert stored.shape == (3, 2, 5, 8)
+    np.testing.assert_array_equal(stored[:, 0, 0, 0], [1.0, 2.0, 3.0])  # views 1..3
+    again = features.extract_image_views(
+        "nonastreda", FakeViewEncoder(), views=3, root=cache.root, log=quiet
+    )
+    assert again == [folder]
+
+
+def test_dinov2_augmentation_is_seeded_and_never_mirrors_tools(tmp_path):
+    from PIL import Image
+
+    from pdmfm.encoders import DinoV2Encoder
+
+    rng = np.random.default_rng(0)
+    path = tmp_path / "photo.png"
+    Image.fromarray(rng.integers(0, 255, (60, 180, 3), dtype=np.uint8)).save(path)
+    encoder = DinoV2Encoder.__new__(DinoV2Encoder)  # pixels only: no checkpoint needed
+    plain = encoder._pixels(path, "tool")
+    first = encoder._pixels(path, "tool", np.random.default_rng((0, 1, 0)))
+    again = encoder._pixels(path, "tool", np.random.default_rng((0, 1, 0)))
+    other = encoder._pixels(path, "tool", np.random.default_rng((0, 2, 0)))
+    assert plain.shape == first.shape == (3, 224, 672)
+    np.testing.assert_array_equal(first, again)
+    assert not np.allclose(first, plain) and not np.allclose(first, other)
+    assert "tool" not in DinoV2Encoder.AUGMENT["mirror"]

@@ -34,6 +34,17 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   channels are always relative (absolute temperature identifies the session, EDA F3).
 > - Wear and RUL intervals are calibrated like the classes: one scale factor on the
 >   predictive scale, fitted by NLL on the inner-validation units (decision D, 2026-10-29).
+> - (2026-10-30) Photo age is counted in passes; the stale-photo test (photos 2 and 3
+>   passes old) is part of every Nonastreda table. Photo-lag and augmentation training,
+>   modality dropout in Plan B, a free linear head and a low-rank W_t were tested and stay
+>   options (`PROJECT_LOG.md`, week 5).
+> - (2026-10-30) RUL is also scored after the first prediction time, where the prognosis
+>   matters. Results are pooled out of fold with 95 % intervals from resampling test units
+>   (the plan's "bootstrap CIs"); seeds are averaged, not counted as independent data.
+>   Hyperparameters are searched on the inner-validation units only (`pdmfm.tune`).
+> - (2026-10-30) The KIT CNC set named under "Facts" holds no tool pictures and no wear
+>   labels (checked on its record). The paired image-sensor milling set is MATWI
+>   (KU Leuven; 17 tools; decision E).
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or

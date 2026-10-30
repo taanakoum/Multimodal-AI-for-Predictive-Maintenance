@@ -121,8 +121,9 @@ def test_photos_of_the_previous_pass_with_their_age(root):
     np.testing.assert_array_equal(photo.token_present[:, :5], np.repeat(has_tool[:, None], 5, 1))
     assert not photo.token_present[:, 10:].any()  # workpiece never attached
     np.testing.assert_array_equal(photo.tokens[~has_tool], 0.0)
-    np.testing.assert_allclose(photo.age[has_tool, 0], manifest.loc[has_tool, "age_tool"])
-    assert (photo.age >= 0).all()
+    # Age in passes: the previous pass's photo is 1 pass old (the seconds are not recorded).
+    np.testing.assert_array_equal(photo.age[has_tool, 0], 1.0)
+    np.testing.assert_array_equal(photo.age[~photo.token_present], 0.0)
 
 
 def test_photo_tokens_come_from_the_cache_row_of_the_attached_path(root):
@@ -382,3 +383,60 @@ def test_manifest_metadata_never_reaches_the_inputs(root, monkeypatch):
             np.testing.assert_array_equal(modality.present, again.present)
             if modality.levels is not None:
                 np.testing.assert_array_equal(modality.levels, again.levels)
+
+
+# ----------------------------------------------------------------------------- photo views
+
+
+def passes_of(manifest, unit):
+    first = manifest.groupby("bag", sort=False).head(1)
+    return first[first["unit"] == unit].sort_values("meta_t_start")
+
+
+def test_photos_of_older_passes(root):
+    """The photo k passes back of pass j is the one pass j - k + 1 carries; the first k
+    passes of a tool have none."""
+    inputs = assemble(root, "nonastreda", ("F",))
+    views, manifest = inputs.modalities["photo"].views, inputs.manifest
+    assert views is not None and views.index.shape == (I.MAX_PHOTO_LAG, len(manifest), 3)
+    passes = passes_of(manifest, "T3")
+    rows = passes.index.to_numpy()
+    for lag in range(1, I.MAX_PHOTO_LAG + 1):
+        tool = views.index[lag - 1, rows, 0]
+        assert (tool[:lag] == -1).all() and (tool[lag:] >= 0).all()
+        np.testing.assert_array_equal(tool[lag:], views.index[0, rows[1 : len(rows) - lag + 1], 0])
+    tokens, present, age = views.tokens(rows, np.full(len(rows), 2), np.zeros(len(rows), int))
+    np.testing.assert_array_equal(tokens[2:], inputs.modalities["photo"].tokens[rows[1:-1]])
+    assert not present[:2].any() and (age[2:, 0] == 2).all()
+
+
+def test_augmented_photo_views_are_loaded_in_cache_order(root, tmp_path):
+    shutil.copytree(root / "interim" / "features" / "images", tmp_path / "images")
+    shutil.copytree(root / "interim" / "features" / "texts", tmp_path / "texts")
+    shutil.copytree(root / "interim" / "features" / "nonastreda", tmp_path / "nonastreda")
+    original = next((tmp_path / "images").glob("nonastreda-tool-dinov2-*"))
+    paths = pd.read_csv(original / "paths.csv")["path"].tolist()
+    base = np.load(original / "features.npy")
+    for kind_folder in (tmp_path / "images").glob("nonastreda-*-dinov2-*"):
+        kind = kind_folder.name.split("-")[1]
+        views = kind_folder.with_name(f"nonastreda-{kind}-dinov2views-test")
+        views.mkdir()
+        shutil.copy(kind_folder / "paths.csv", views / "paths.csv")
+        cached = np.load(kind_folder / "features.npy")
+        np.save(views / "features.npy", np.stack([cached + 1, cached + 2]))
+        (views / "meta.json").write_text("{}")
+    inputs = I.assemble(
+        "nonastreda", "stats", ("F",), window_root=root / "interim" / "windows",
+        feature_root=tmp_path,
+    )  # fmt: skip
+    bank = inputs.modalities["photo"].views.banks[0]
+    assert bank.shape[0] == 3 and len(paths) == bank.shape[1]
+    np.testing.assert_allclose(bank[2], base.astype(np.float32) + 2, rtol=1e-3)
+    (tmp_path / "images" / "nonastreda-tool-dinov2views-test" / "paths.csv").write_text(
+        "path\nraw/other.png\n"
+    )
+    with pytest.raises(ValueError, match="other photos"):
+        I.assemble(
+            "nonastreda", "stats", ("F",), window_root=root / "interim" / "windows",
+            feature_root=tmp_path,
+        )  # fmt: skip
