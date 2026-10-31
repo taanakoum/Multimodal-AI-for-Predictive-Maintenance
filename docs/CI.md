@@ -126,6 +126,7 @@ Weekly grouped pull requests for GitHub Actions versions and Python dependencies
 | Week 5, full local suite | `pytest` with the real data and cached checkpoints | **309 passed, 25 skipped** (5 network, 4 Paderborn and PHM 2010 acceptance, 16 Linux-only SLURM tests) |
 | Week 5 after the audit (2026-10-30) | Full local suite; `run_local_ci.sh` on 3.11 and 3.12 | **315 passed, 25 skipped** locally; **290 passed, 46 skipped** in both fresh environments; coverage 85 %; pyright **0 errors** |
 | Week 5, image fixes and diagnostics (2026-10-31) | Same | **334 passed, 25 skipped** locally; **309 passed, 46 skipped** in fresh environments; coverage 86 %; pyright **0 errors** after one fix that only the fresh environment's pandas stubs revealed |
+| Week 6: MATWI, Gate 2, RUL (2026-10-31) | Full local suite with the real data and the cached checkpoints | **427 passed, 26 skipped** (17 Linux-only SLURM, 5 network, 4 Paderborn and PHM 2010 acceptance); pyright **0 errors**. Fresh environments not rerun this pass |
 
 **Not covered by CI:**
 - the real data (local and Ruche only);

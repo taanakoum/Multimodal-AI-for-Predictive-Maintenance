@@ -10,25 +10,25 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the Gate-2 stage (on top of `a10b2b7`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 1 | Commit and push the week-6 results write-up (docs only, on top of `b2b7d4d`); check that CI is green for `b2b7d4d` | Ruche clones the repository from GitHub | 5 min |
 | 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). The §1 archive now also carries the MATWI window store; step 5 (§16) now ends with Gate 2 (§16.6) and the RUL runs (§16.7) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2 and RUL with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
 | 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
 | — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`; MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
-## 1. Commit and push the Gate-2 stage
+## 1. Commit and push the week-6 write-up
 
-`a10b2b7` holds tuning and the first MATWI pieces. Not committed yet: the MATWI reader and
-store support, the Gate-2 candidates and search, the RUL model, the OmniFuser lessons
-(schedule baseline, ordinal metrics), their tests and the docs.
+`b2b7d4d` holds the code of this stage (MATWI, Gate 2, the RUL model, the OmniFuser lessons)
+and its tests. Not committed yet: the week-6 results in `PROJECT_LOG.md`, the RUL flag fix in
+the runbook (§16.7), the test counts in `docs/CI.md` and this file.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb   # new: pdmfm/datasets/matwi.py, pdmfm/gate2.py, pdmfm/model/fusion.py, pdmfm/rul.py, pdmfm/texts/matwi.yaml, 3 test files
+git status -sb   # PROJECT_LOG.md, docs/CI.md, docs/RUCHE_RUNBOOK.md, docs/USER_ACTIONS.md
 git add -A
-git commit -m "MATWI, Gate-2 fusion search with inner cross-validation, RUL from past snapshots"
+git commit -m "Week 6 results: Gate-2 pilot, RUL from past snapshots, MATWI with Plan B"
 git push
 ```
 
@@ -157,33 +157,31 @@ set (no photos and no wear labels).
 
 ## What comes next (my side)
 
-| Week | Stage | What I build and test locally | What then needs Ruche |
+Where things stand (`PROJECT_LOG.md`, week 6): Gate 2 is built and validated; its pilot on
+Nonastreda (four candidates, Mantis) keeps Plan B by the rule, with the fusion candidates
+more robust and better calibrated. The RUL model with past snapshots does not beat Plan B on
+XJTU-SY, so Plan B stays for RUL too. MATWI is built and hard across tools.
+
+| When | Stage | What I do locally | What needs Ruche (your step 2) |
 |---|---|---|---|
-| 6-7 (Nov 30 - Dec 13) | **Gate 2: fusion search** | The four other fusion candidates on the cached tokens, each ≤ 3 M parameters, sharing Plan B's inputs, heads, training loop and evaluation: concat-MLP, Perceiver latents (32 latents, 2 cross- + 4 self-attention layers), MBT bottleneck (4 tokens, 4 layers), C2F-N (sensor hub with gated landmarks per other modality). AdamW 3e-4 with a cosine schedule, 50 epochs, modality dropout 0.3. Then missing-modality curves and the Gate-2 rule (validation macro-F1 or RMSE, then robustness, then ECE; ties to the smaller model). Runs locally on Nonastreda and XJTU-SY | The same search with the Gate-1 winner and on Paderborn: one runbook section, like §16 |
-| 8-9 (Dec 14-27) | Fusion pretraining | Masked latent modelling on cached tokens, cross-modal InfoNCE, text anchoring; corpus minus each fold's held-out units; smoke tests on CPU | The pretraining jobs |
-| 10-11 | Adaptation | Few-shot draws, linear probe vs LoRA vs full fine-tuning on KAIST, Paderborn real damage, PHM 2010 | The sweeps (holiday queue) |
+| Now, until your Ruche results | Gate 2 decision | Nothing blocks; I wait for §16.6 | The full search (6 candidates, Gate-1 winner) on Nonastreda, MATWI and Paderborn, and its test-unit run |
+| Weeks 8-9 | Pretraining | If a fusion candidate wins: masked latent modelling, cross-modal InfoNCE (force ↔ photo on both milling sets) and text anchoring on the cached tokens, each fold's held-out units excluded. If Plan B stays: the same losses on Plan B's per-modality adapters (the plan's fallback) | The pretraining jobs |
+| Weeks 10-11 | Adaptation (Goal 2) | Few-shot draws, linear probe vs LoRA vs full fine-tuning; targets KAIST, Paderborn real damage, PHM 2010 (or NASA milling, decision A), and MATWI ↔ Nonastreda | The sweeps (holiday queue) |
+| Week 12 | Trust and explanations (Goal 3) | Calibration and coverage tables, missing-modality curves, the physics score, deletion tests, explanation cards | Possibly the occlusion runs |
 
-If Gate 2 finds no candidate better than late aggregation on the validation units, Plan B
-becomes the model (plan, Gate 2), and weeks 8-9 pretrain its per-modality adapters instead.
-
-Carried into Gate 2 from the audit and the tests of 2026-10-30 (`PROJECT_LOG.md`, week 5):
-- **Inner cross-validation for every option choice.** One validation tool per fold is too
-  noisy to choose options on Nonastreda (every option looked better on test units, none on
-  validation). Rotating the validation tool over the training tools needs about 7 times the
-  fits: a Ruche job.
-- **Temporal context for RUL.** A single snapshot cannot place a bearing on its degradation
-  path: after the first prediction time the error is 0.29 and the PHM 2012 score 0.20. Next: a
-  causal model over the past snapshots' embeddings, then the plan's TimesFM stage.
-- **The photo options** (older photos, augmented copies, modality dropout) re-tested under
-  inner cross-validation; modality dropout is part of every Gate-2 candidate anyway.
-- **A steadier interval calibration.** Fit decision D's scale on cross-fitted predictions of
-  the training units (7-9 units instead of 1-3), because the current scale worsened XJTU-SY
-  coverage.
-- **The supervised from-scratch PatchTST baseline** that the plan lists for every table.
-- **Paired tests over fold × seed** (Wilcoxon, bootstrap confidence intervals, Holm
-  correction) in the summaries.
-- **The text projection W_t before any zero-shot claim.** Class prototypes are nearly
-  parallel in Qwen space.
+Carried forward, in order of value:
+- **Cross-tool generalization is the limit on both milling sets** (training macro-F1 0.93
+  against 0.41-0.78 on test tools). Pretraining across both sets and the transfer targets
+  address it; more Nonastreda options do not.
+- **RUL:** Plan B's expert embedding, cross-fitted, as the input of the sequence model; the
+  plan's health indicator with TimesFM; C-MAPSS only if you reopen decision G.
+- **Nonastreda's labels:** 18 passes disagree with their own wear and T6's validation scores
+  are the floor of every candidate. Report as is; a threshold-label variant is one table
+  if the report needs it.
+- **A steadier interval calibration** (cross-fitted on the training units): MATWI's raw 90 %
+  intervals cover 29 %, calibrated 85 % at a large width.
+- **The supervised from-scratch PatchTST baseline**, paired tests with Holm correction, and
+  the text projection W_t before any zero-shot claim (unchanged from week 5).
 
 ---
 

@@ -2,16 +2,16 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-10-30)
+## Status at a glance (updated 2026-10-31)
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-4 of the plan (weeks 2-5) implemented, audited and tested. Stage 4 (Plan B: per-modality evidential experts, Dempster's rule and MoNIG) run locally on Nonastreda and XJTU-SY. The GPU part and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: Gate 2, the fusion search |
+| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. The full Gate 2, the GPU caches and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
 | Tests | See "Week 5" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
-| Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (manual download) |
+| Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, MATWI, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda, MATWI. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (your Kaggle download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
-| Needs you | `docs/USER_ACTIONS.md`: commit and push the audit and test pass; run the Ruche runbook (Plan B now tuned first, §16.2); PHM 2010; decisions E (MATWI), F (second paper), G (C-MAPSS) |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push this stage; run the Ruche runbook (now with MATWI, Gate 2 and RUL, §16.5-§16.7); PHM 2010 from Kaggle. Decisions F and G deferred |
 
 ## Week 1 — setup, downloads and verification
 
@@ -154,6 +154,11 @@ Week 2 (Nov 2-8, plan):
 | 2026-10-25 | Nonastreda: reuse your `Data\Nonastreda_Data` (hash-verified), download only chip and workpiece photos, skip precomputed spectrograms and scalograms | Your request; spectrograms and scalograms cover whole passes and are not used by the plan |
 | 2026-10-25 | KAIST fusion treated as condition-level pairing (not sample-synchronous) | Clock offset between the two devices and 5 non-simultaneous recordings |
 | 2026-10-25 | Gate 1 on CPU: Mantis on all arms; MOMENT T arm and AST on a 10 % unit-stratified subsample | Full MOMENT T-arm or AST caching takes about 40 h on this CPU |
+| 2026-10-31 | MATWI downloaded in full and added as a source dataset | 19 GB fit on D:; decision E |
+| 2026-10-31 | Gate 2 by inner cross-validation, with a rule fixed before any run (gain ≥ 0.01 over the better late variant, ≥ 60 % paired wins) | One validation tool per fold could not choose options (week 5) |
+| 2026-10-31 | Plan B stays the RUL model; the past-snapshot GRU is kept as code and not adopted | It scored below Plan B on validation; longer histories scored lower |
+| 2026-10-31 | Schedule baseline, ordinal metrics and accuracy on class changes in every table | OmniFuser's run number alone beat its model |
+| 2026-10-31 | Nonastreda keeps the publisher's visual labels | Comparability with the dataset's own results; 18 of 378 passes disagree with the wear thresholds, stated with every result |
 
 ## Week 1, continued (2026-10-26): data layer, EDA, CI
 
@@ -709,3 +714,206 @@ difference +3.1 [−0.6, +5.8].
 | CI reproduced in fresh Python 3.11 and 3.12 environments | 309 passed, 46 skipped; coverage 86 %. Pyright in the fresh environment (newer pandas stubs) found one finding the project environment did not, in the RUL check of `pooled_summary`; fixed, then 0 errors |
 | ruff, pre-commit on every new and changed file | Clean; all hooks pass |
 | New tests | `test_stats` (4), `test_tune` (3); photo views and lags (`test_inputs`, 2); augmented-view cache and seeded augmentation (`test_features`, 2); options, fit diagnostics, staleness, per-bag tables, pooled intervals, RUL after FPT, the projected head, the command line (`test_planb`, 9) |
+
+
+## Week 6 (2026-10-31): MATWI, Gate 2 with inner cross-validation, RUL from past snapshots, OmniFuser lessons
+
+Your requests: download MATWI and write its reader and photo cache; obtain PHM 2010 if
+possible; leave decisions F and G for later; build Gate 2 with validation rotated over
+several tools and a RUL model that sees past snapshots; validate them; re-audit; learn from
+the OmniFuser results without inheriting their problems; check the CPU before heavy jobs.
+
+### PHM 2010
+
+No route works without your login (checked 2026-10-31): the original host serves a parking
+page and the PHM Society repository links only to it; IEEE DataPort lists the challenge
+without files; Kaggle holds a copy (`rabahba/phm-data-challenge-2010`) behind a Kaggle
+login. It is step 3 of `docs/USER_ACTIONS.md`.
+
+### MATWI
+
+| Step | Result |
+| --- | --- |
+| Download | All 20 files (19.05 GB; it fits on D:, so the whole set, not a half or a quarter), every one checked against the publisher's MD5 through the Dataverse API. The KU Leuven server dropped the connection once; the resumed run fetched the rest |
+| Reader (`pdmfm/datasets/matwi.py`) | Labels joined by timestamps: a cut's wear is the first photo taken after it and before the next cut, because `labels.csv` pairs rows one cut off in places (Set 9: median row gap 175 s instead of about 85 s). Set 17 has two inserts photographed in turn: the worse insert's latest photo. Wear classes by Nonastreda's thresholds (71 / 110 µm), in Nonastreda's label space. Signals resampled from 1,636.7 Hz to 1 kHz (ratio 611/1000) |
+| Insert crops | 1,680 photos (5,496 × 3,672) cropped to each set's box (600 × 400) in 250 s |
+| Window store | 11,043 windows of 8.2 s from 1,700 cuts of 17 tools; 1,567 labelled cuts (sharp 540, used 486, dulled 541); 133 cuts have no photo before the next cut and stay unlabelled. 96.8 % of windows carry the previous cut's photo; a tool's first cut has none; no window ever carries its own cut's photo |
+| Caches | Handcrafted T and F; DINOv2 insert tokens (1,680 × 7 × 384: CLS and a 2 × 3 grid; 493 s); Qwen3 texts (8 contexts; the 3 prototypes are Nonastreda's). Mantis, MOMENT and PatchTST go to Ruche (about 2 h per encoder on this CPU) |
+| Folds | 5 outer folds of 3-4 tools, dealt round-robin so that every fold mixes C45 and 304 stainless |
+| Acceptance tests (real data) | 4 new, all pass: inventory and labels, crops, previous-cut photos only, window count |
+
+Quick checks on the real data:
+
+- Within a tool, the window RMS follows the wear: Spearman Fx 0.70, Fy 0.66, accelerometer
+  0.73, Fz 0.39, microphone 0.12. Pooled over tools it is weaker (Fy 0.56 on C45, 0.80 on
+  304), because each tool has its own level: the baseline-relative level tokens apply.
+- Wear rises with the cut number within a tool (Spearman 0.93) but tool lives differ (51 to
+  213 cuts), so across tools the cut number explains much less (0.44 on C45, 0.09 on 304).
+  The new schedule baseline (below) measures exactly this.
+- Label noise is far lower than Nonastreda's: the wear decreases on 69 of 1,550 cut-to-cut
+  steps (4.5 %; Nonastreda 189 of 502); 21 % of cuts lie within 10 µm of a class edge. 177
+  cuts show adhesion rather than flank wear; their wear value is used as it is.
+- Fz rises with the cut number within most tools (median Spearman 0.55); unlike Nonastreda's
+  Fz there is no reset sawtooth, so its level token stays.
+
+### Gate 2: what was built
+
+| Part | Implementation |
+| --- | --- |
+| Candidates (`pdmfm/model/fusion.py`) | Plan B's experts plus a fusion stage over all modalities' tokens, with its own evidential class head and NIG head; the fused opinion joins Dempster's rule and MoNIG with the experts' opinions (the plan's architecture). Concat (each expert's attention-pooled vector, with presence flags, MLP), Perceiver (32 latents, 2 cross- and 4 self-attention layers), MBT (4 bottleneck tokens, 4 shared layers), C2F (sensor modalities form the hub; 4 learned landmarks per other modality; gated cross-attention; 2 self-attention layers). Fusion stages at d = 256: 0.33 M, 2.38 M, 1.58 M, 1.45 M parameters (≤ 3 M) |
+| Masking | An absent or dropped modality's tokens never reach any fusion stage (tested by filling them with noise); its expert's opinion is vacuous |
+| Training (`pdmfm/train.py`) | The plan's search recipe: whole modalities dropped from the inputs with p = 0.3 (never all of a row's), AdamW 3e-4, cosine schedule per batch, 50 epochs; TMC and NIG losses also on the fused heads. Loss-level dropout is refused for fusion candidates (it would only recombine experts that the fusion stage has already seen) |
+| Missing-modality results (`pdmfm/planb.py`) | `without_<modality>` now marks the modality absent at prediction time, so a fusion stage loses it too (for late fusion this equals the old recombination, tested); rows left with no input are not scored. `--fusion`, `--input-dropout`, `--schedule`; `only_fused` and `trust_fused` |
+| Inner cross-validation (`pdmfm/protocols.inner_folds`) | Within outer fold k, validation rotates over the other four folds' test groups and training uses the rest: 4 inner folds, every non-test unit validated once per outer fold, 20 validation scores per candidate. The outer test units belong to no part |
+| Search and rule (`pdmfm/gate2.py`) | Six candidates: `planb` (Plan B's own recipe) and late, concat, Perceiver, MBT, C2F (search recipe). Ranking by mean score; near-ties (within one standard error of the paired differences) by robustness (score without each modality), then ECE (or interval coverage error for regression), then size. Rule fixed before any run: a fusion candidate replaces late fusion only with a mean gain ≥ 0.01 over the better of `planb` and `late` and wins on ≥ 60 % of the paired folds. Writes `results.csv` (resumable), `ranking.csv`, `decision.json` (with the flags for the outer test run), `summary.md` |
+
+Problems found while building and reviewing it (before any real run):
+
+| # | Problem | Fix |
+| --- | --- | --- |
+| 25 | In the loss, the fused class opinion was assigned to the variable that held the fused NIG, so on a dataset with both tasks the regression loss would have been computed on class evidence | Renamed; a test checks the total loss term by term |
+| 26 | Concat averaged each modality's tokens equally, diluting the force-level tokens that carry the wear signal (its fused head lagged: wear error 12.7 µm mean over 3 seeds on synthetic MATWI) | Concat takes each expert's attention-pooled vector (9.1 µm) |
+| 27 | Robustness in the Gate-2 score counted rows left with no input after a drop (scored as uniform guesses) | Scored on rows that keep some input, as Plan B's tables do |
+| 28 | The fused head's own wear estimate learns more slowly than the experts on small data | Expected; MoNIG weights it by its evidence. Tested to learn (below 0.6 of the training mean's error) |
+
+CPU cost on real Nonastreda (Mantis F + photos, one thread, per epoch): late 4.6 s, concat
+3.1 s, C2F 5.4 s, MBT 26 s, Perceiver 40 s. The full search is about 22 CPU-hours per
+dataset, so it runs on Ruche (runbook §16.6). The laptop ran a pilot with the four cheap
+candidates (below).
+
+### RUL from past snapshots (`pdmfm/rul.py`)
+
+Each snapshot is summarized by its windows' mean cached features, taken relative to the
+bearing's healthy start (the mean of its first 10 snapshots seen so far, causal), and a GRU
+reads the last `history` snapshots of the same bearing; a NIG head gives the normalized RUL.
+`history = 1` is the single-snapshot control inside the same model. Runs reuse Plan B's
+scoring, summaries, pooled intervals, and add `comparison.csv` (paired with a Plan B run).
+
+**The first version overfitted, and how it was changed.** With absolute Mantis embeddings and
+the elapsed time as inputs, the first real fit peaked on validation after one epoch and then
+fell while the training loss kept dropping: absolute embeddings and elapsed time identify the
+bearing, so the GRU learns the 9 training bearings' paths. I had also seen that fold's test
+error (0.131 against Plan B's 0.062) before changing the design. The change follows the
+plan's rule for level tokens (relative to the healthy baseline) and the validation curve, not
+the test score; that first run is kept in `runs/rul-superseded-2026-10-31/`.
+
+Results (Mantis F + E, 5 outer folds × 3 seeds; history chosen on validation only):
+
+| Model | Validation score (chooses) | Test RMSE, all snapshots | Test RMSE after FPT | PHM 2012 after FPT | 90 % coverage after FPT, calibrated | Pooled RMSE after FPT [95 %] | Paired with Plan B after FPT [95 %] |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GRU, history 1 (control) | **0.426** | 0.183 | 0.310 | 0.148 | 0.44 | 0.371 [0.236, 0.437] | +0.056 [−0.013, +0.085] |
+| GRU, history 10 | 0.382 | 0.196 | 0.328 | 0.149 | 0.40 | 0.409 [0.237, 0.490] | +0.094 [−0.014, +0.138] |
+| GRU, history 30 (stopped after 5 of 15 fits) | 0.055 on those fits (history 1: 0.124) | – | – | – | – | – | – |
+| Plan B, one snapshot (`planb-xjtu-mantis-FE`) | **0.462** | 0.176 | 0.286 | 0.195 | 0.57 | 0.315 [0.229, 0.356] | – |
+| Schedule baseline (mean RUL at the same minute) | – | pooled 0.312 | – | – | – | 0.499 [0.449, 0.514] | – |
+| Training mean | – | 0.300 | – | – | – | 0.478 [0.440, 0.499] | – |
+
+(Test columns: mean ± over 5 folds × 3 seeds, bag level. Elapsed-time ablation not run locally;
+it is in the runbook, §16.7.)
+
+**Verdict: the past-snapshot model is not adopted.** Within the same model, more history
+lowers the validation score (history 1: 0.426; 10: 0.382; 30: lower still on the fits run),
+and even its single-snapshot control stays below Plan B (0.462). The test units agree. By the
+rule (choose on validation), Plan B's single-snapshot expert remains the RUL model, scored
+after FPT as before. Both beat the schedule and training-mean baselines.
+
+Why, as far as the evidence goes: with 9 training bearings (3 per condition) and lives from
+42 to 2,538 minutes, the remaining fraction of life after FPT is not fixed by the recent
+trend, and a longer history gives the model more ways to fit the training bearings. Plan B's
+expert also reads the tokens through attention (d = 256), while the GRU reads mean-pooled
+snapshot vectors. Next steps for RUL, in order: Plan B's own expert embedding as the
+sequence input, cross-fitted on the training bearings so the sequence model never sees
+fitted embeddings; the plan's health indicator with TimesFM; more run-to-failure units (decision G,
+deferred). The negative result itself goes into the report: temporal context does not help
+without more units.
+
+### What the OmniFuser results teach, and where this code stands
+
+Read: `FINAL_REPORT_REPRODUCTION.md`, `FIXES_AND_VALIDATION.md`, `RESULTS_MAIN_RUNS.md` and
+the code of `../OmniFuser` (branch `Ruche-OmniFuser-Training`, 51 finished Ruche runs). Its
+main numbers: accuracy 0.674 (paper 0.867), training accuracy 0.88, macro ROC AUC 0.87,
+"used" recall 0.49, persistence (copy the shown photo's label) 0.948, run number alone 0.708.
+
+| OmniFuser finding | Risk for this code | Status here |
+| --- | --- | --- |
+| The run number alone (0.708) beats the model (0.673) | A schedule shortcut nobody measures | Run and block numbers were never inputs (`meta` only). **New:** every table has a schedule baseline (class and target at the same pass, cut or snapshot number, from the training units) and the model's difference to it |
+| Lag-0 photos: 95 % of targets can be read off the photo | Reading the label instead of predicting | Previous-pass and previous-cut photos only, checked on the real stores for Nonastreda and MATWI (`test_real_data.py`) |
+| 88 % of errors between neighbouring classes; argmax under-calls "used" (recall 0.49); the ordinal median raises it by about 0.2 | Macro-F1 hides an ordinal problem | **New:** recall per class, mean absolute class error, and the parameter-free ordinal-median decision reported next to argmax for the wear classes (never instead of it) |
+| Prediction flicker; a monotone decoder helps | – | Not adopted: monotone decoding over a tool's passes uses later passes (not causal); the bag-level decision has no within-window flicker |
+| Training 0.88, test 0.67: a tool-to-tool gap, not under-fitting | The same gap here (week 5) | The fit on training units is in every result; levels are relative to each tool's first pass; Gate 2 is chosen by inner cross-validation |
+| One validation tool per fold; single runs differ by up to 0.017 | Choosing on noise | 4 inner folds per outer fold for Gate 2; 3 seeds; pooled intervals by unit bootstrap; a pre-registered rule |
+| Labels are the annotators' visual judgement: a pass at 60 µm can carry any class; 57 of 378 passes disagree with `tool_label` | Classes and wear disagree | We inherit `image_label` through `omnifuser.data.load_nonastreda`, as OmniFuser does. **New finding:** 18 of 378 passes disagree with the 71/110 µm thresholds (mostly T6, labelled used or dulled at 43-84 µm). Kept, for comparability with the dataset's own results; stated here and in the plan amendments. MATWI's classes come from its wear by those thresholds |
+| Duplicated force recordings with conflicting labels | Leakage or noise | `load_nonastreda` keeps one per group (the larger wear); we read 378 passes |
+| Fz is drift that encodes the block | A position shortcut | No Fz level token on Nonastreda (since week 2); MATWI's Fz rises with wear without resets, so it stays |
+| Frozen ImageNet features read the photo poorly; a crop of the cutting edge helps a little; fine-tuning helps most | The photo pathway is weak | DINOv2 with a 2 × 3 patch grid; MATWI photos are cropped to the insert; LoRA on the image encoder is the plan's adaptation stage |
+| C2F did not help classification (concatenation was as good); the image GAT added nothing | Copying a weak design | C2F is one of five candidates and must beat late fusion by the rule. Its code was rewritten: OmniFuser's layer has no masks (an absent photo enters as zeros and still shapes the landmarks); ours masks absent modalities and padded tokens (tested) and does not reuse the shared/private decomposition or the two-stream concatenation |
+| `data.py` changed in the last commit | A silent change in our Nonastreda input | Only photo cropping changed (`load_photo`, `ImageBank`); `load_nonastreda`, the only function we import, is unchanged. The real-data test still counts 378 passes with 147 / 118 / 113 per class |
+
+### Gate-2 pilot on Nonastreda (laptop)
+
+`runs/gate2/gate2-pilot-nona-mantis-F/`: Nonastreda, Mantis F + photos, the four cheap
+candidates (Perceiver and MBT run on Ruche), all 20 inner folds, one seed. Test units were
+never read.
+
+| Candidate | Inner-validation score | Std over folds | Gap to Plan B (paired SE) | Wins against Plan B | Robustness (without one modality) | ECE (window) | Parameters (whole model) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Plan B** (its own recipe) | **0.659** | 0.189 | – | – | 0.458 | 0.270 | 1.31 M |
+| concat | 0.651 | 0.195 | −0.008 (0.003) | 5 of 20 | **0.493** | **0.200** | 1.80 M |
+| late (search recipe) | 0.649 | 0.193 | −0.010 (0.003) | 3 of 20 | 0.476 | 0.264 | 1.31 M |
+| C2F | 0.644 | 0.191 | −0.015 (0.004) | 4 of 20 | 0.478 | 0.222 | 3.06 M (fusion stage 1.45 M) |
+
+**Verdict of the pilot, by the rule fixed beforehand: no candidate beats late fusion; Plan B
+stays the model on Nonastreda.** What the search recipe and the fusion stages do buy is
+robustness to a missing modality (+0.02 to +0.035) and calibration (ECE 0.20-0.22 against
+0.27), which matter for Goal 3; they are reported, not used to overturn the rule. The gaps
+are small but consistent (paired SE 0.003-0.004). The Ruche search (Perceiver, MBT, the
+Gate-1 winner, MATWI and Paderborn) decides Gate 2; this pilot shows the machinery works on
+real data and what to expect on Nonastreda.
+
+By validation group, every candidate scores 0.31-0.33 on T5 + T6 against 0.58-0.81 on the
+other groups: T6 is the tool whose publisher labels disagree with its own wear (above). The
+label noise, not the model, sets the floor there.
+
+### MATWI with Plan B (laptop, handcrafted features)
+
+`runs/planb/planb-matwi-stats-TF/` (handcrafted T + F and the insert photos; 5 outer folds,
+seed 0; the Gate-1 encoder and 3 seeds run on Ruche, runbook §16.3):
+
+| Quantity (pooled out of fold, bag level) | Estimate [95 %] |
+| --- | --- |
+| macro-F1, model (argmax) | 0.443 [0.315, 0.550] |
+| macro-F1, model (ordinal median) | 0.477 [0.337, 0.604] |
+| macro-F1, persistence (previous cut's true class) | 0.925 [0.878, 0.957] |
+| macro-F1, schedule baseline | 0.334 [0.224, 0.427] |
+| macro-F1, majority | 0.215 [0.105, 0.330] |
+| model − schedule | +0.109 [−0.036, +0.255] |
+| accuracy where the class changes: model / schedule | 0.33 / 0.34 |
+| wear RMSE (µm): model / training mean / persistence | 67.6 / 81.3 / 34.1 |
+
+Per modality (test, mean over folds): photo alone 0.454, vibration 0.325, acoustic 0.270,
+force 0.208; without the photo 0.307. The training tools are fitted (macro-F1 0.93) and the
+test tools are not (0.41).
+
+**Why MATWI is hard across tools, measured on the data.** Within a tool the force and
+vibration levels follow the wear (Spearman about 0.7), but across tools the level relative to
+each tool's first cut does not (Spearman about 0): tools start at different wear (Set11 at
+150 µm, Set15 at 120 µm, Set16 at 90 µm), end anywhere between 90 and 750 µm, and run under 8
+cutting conditions in two materials. Set07 is sharp for 99 % of its cuts, Set15 dulled for all
+of them. With 13 training tools per fold, the sensors' relation to wear does not carry over;
+the photo does best. Absolute plus relative level tokens (`--levels both`) were tried because
+a worn first cut is a poor reference: validation +0.008 (3 of 5 folds), below the 0.01 rule,
+so the relative tokens stay. MATWI remains valuable as it is: a hard, honest test of
+cross-tool generalization, and the second paired image-sensor milling set for pretraining and
+transfer (Nonastreda ↔ MATWI).
+
+### Verification of this pass
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data | **424 passed, 29 skipped, 0 failed**; the 3 checkpoint tests skipped there pass with the Hugging Face cache set (`test_encoders`, `test_features`: 27 passed), so 427 passed. Skipped: 17 Linux-only SLURM, 5 network, 4 Paderborn and PHM 2010 acceptance |
+| ruff format and check, pyright `pdmfm` (project environment) | Clean; pyright **0 errors** after typing fixes in the MATWI reader and `gate2.py` (pandas stubs) |
+| pre-commit on the changed files | All hooks pass |
+| New tests | `test_fusion` (31), `test_gate2` (33), `test_rul` (10); MATWI reader (2), texts (1), protocols (6), real data (3 + the window count); ordinal metrics (2); Plan B: late-fusion drop equivalence, schedule baseline and fallback, ordinal results (4); status script (1, Linux) |
+| Real-data acceptance | MATWI inventory and labels, crops, previous-cut photos only, 11,043 windows; Nonastreda still 378 passes (147 / 118 / 113) with OmniFuser's current `load_nonastreda` |
+| CPU | `pdmfm.resources` before every heavy job; threads capped by it (1-2 here) while another process held 3 cores; no job ran on a saturated machine |
+| Not done here | CI in fresh 3.11 and 3.12 environments (`run_local_ci.sh`) was not rerun this pass; GitHub CI on `b2b7d4d` is yours to check (step 1). Perceiver and MBT in the Gate-2 search, and 3 seeds on MATWI, are on Ruche |

@@ -636,16 +636,21 @@ done
 
 **16.7 RUL from past snapshots** (XJTU-SY; CPU jobs are enough). History 1 is the
 single-snapshot control inside the same model; the history used in the report is the one with
-the best mean inner-validation score, never the best test score:
+the best mean inner-validation score, never the best test score. On the laptop (Mantis F + E)
+no history beat Plan B and longer histories scored lower (`PROJECT_LOG.md`, week 6); this step
+checks whether that holds for the Gate-1 winner. The last job is the elapsed-time ablation:
 
 ```bash
 for h in 1 10 30; do
   sbatch --job-name=rul-h$h --time=04:00:00 slurm/cpu.sbatch \
     python -m pdmfm.rul --encoder "$ENCODER" --arms $ARMS --run-id rul-v1-xjtu-h$h --history $h --compare runs/planb/planb-v1-xjtu_sy
 done
-sbatch --job-name=rul-h10-noelapsed --time=04:00:00 slurm/cpu.sbatch \
-  python -m pdmfm.rul --encoder "$ENCODER" --arms $ARMS --run-id rul-v1-xjtu-h10-noelapsed --history 10 --no-elapsed --compare runs/planb/planb-v1-xjtu_sy
+sbatch --job-name=rul-h10-elapsed --time=04:00:00 slurm/cpu.sbatch \
+  python -m pdmfm.rul --encoder "$ENCODER" --arms $ARMS --run-id rul-v1-xjtu-h10-elapsed --history 10 --elapsed --compare runs/planb/planb-v1-xjtu_sy
 ```
+
+History 30 is slow on a CPU (about 4 min per fit on the laptop); give it `--time=08:00:00` if
+its job stops at the limit, then submit it again to resume.
 
 Each run writes `runs/rul/<run-id>/summary.md` (the same tables as Plan B, with the
 `schedule` baseline: the training bearings' mean RUL at the same snapshot number) and
