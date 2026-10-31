@@ -1,4 +1,4 @@
-# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1 and Plan B
+# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1, Plan B, Gate 2 and RUL
 
 This runbook finishes stages 2-3 of the plan on **Ruche**, the cluster of the Mésocentre
 Paris-Saclay:
@@ -6,7 +6,10 @@ Paris-Saclay:
 - the feature caches that are too slow for the laptop (MOMENT, AST, your own PatchTST);
 - the Paderborn data, which only Ruche can download;
 - the Gate-1 encoder probe on all four of its tasks;
-- the Plan B baseline (stage 4) with the Gate-1 winner, on Nonastreda, XJTU-SY and Paderborn.
+- the Plan B baseline (stage 4) with the Gate-1 winner, on Nonastreda, MATWI, XJTU-SY and
+  Paderborn;
+- Gate 2, the fusion search by inner cross-validation, on the multimodal datasets
+  (Nonastreda, MATWI, Paderborn), and the RUL model that reads past snapshots (XJTU-SY).
 
 It follows the structure and the conventions of the OmniFuser runbook
 (`../OmniFuser/TRAINING_RUNBOOK_RUCHE.md`):
@@ -30,7 +33,7 @@ Ruche** (in the SSH session).
 |---|---|
 | Overview | What runs where · the jobs · before you start · the path at a glance |
 | A: Set up (once) | §1 Laptop · §2 Connect · §3 Storage · §4 Code · §5 Data · §6 Python environment · §7 `slurm/env.sh` · §8 Weights · §9 SLURM scripts |
-| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B · §17 Step 6: download |
+| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B, Gate 2 and RUL · §17 Step 6: download |
 | C: Operating | §18 Watch, resume, cancel · §19 Troubleshooting · §20 Rules · §21 Cheat sheet |
 
 ## Overview
@@ -39,8 +42,8 @@ Ruche** (in the SSH session).
 
 | Work | Where | Why |
 |---|---|---|
-| Window stores of CWRU, KAIST, XJTU-SY, Nonastreda (`python -m pdmfm.windows build`) | Laptop (done) | The data is there |
-| Mantis features, DINOv2 photo tokens, Qwen3 texts, a first Gate-1 probe | Laptop (done; `PROJECT_LOG.md`) | Fast enough on the CPU |
+| Window stores of CWRU, KAIST, XJTU-SY, Nonastreda, MATWI (`python -m pdmfm.windows build`) | Laptop (done) | The data is there |
+| Mantis features, DINOv2 photo tokens (MATWI's insert crops included), Qwen3 texts, a first Gate-1 probe | Laptop (done; `PROJECT_LOG.md`) | Fast enough on the CPU |
 | Paderborn download | Ruche login node | Its host refuses the laptop |
 | Paderborn extraction, acceptance tests, window store | Ruche CPU job | Needs only a RAR tool |
 | MOMENT (arms T, F, E) and AST (arm S) on all windows | Ruche GPU | About 40 h each on the laptop CPU; minutes on an A100 |
@@ -48,6 +51,9 @@ Ruche** (in the SSH session).
 | Gate-1 probe on all four tasks | Ruche CPU job (or the laptop) | Logistic and ridge regressions |
 | Plan B on Nonastreda and XJTU-SY with Mantis and the handcrafted reference | Laptop (done; `PROJECT_LOG.md`, week 5) | About 70 s per fold and seed on the CPU |
 | Plan B with the Gate-1 winner, and on Paderborn | Ruche GPU | Needs the full caches and the Paderborn store; minutes on an A100 |
+| MATWI sensor caches (Mantis, MOMENT, PatchTST) | Ruche GPU | 11,043 windows × 5 channels: about 2 h per encoder on the laptop CPU |
+| Gate 2: 6 candidates × 20 inner folds per dataset | Ruche GPU | About 22 CPU-hours per dataset on the laptop (Perceiver 40 s and MBT 26 s per epoch); the laptop ran a 4-candidate pilot (`PROJECT_LOG.md`, week 6) |
+| RUL from past snapshots (XJTU-SY) | Laptop (done with Mantis) or a Ruche CPU job | Minutes per fold; rerun with the Gate-1 winner |
 
 ### The jobs
 
@@ -58,7 +64,7 @@ Ruche** (in the SSH session).
 | 2 | Feature caches: handcrafted (CPU), Mantis, MOMENT, AST (GPU) | `cpu_short`, `gpua100` | Minutes to an hour each | `$PDMFM_DATA_ROOT/interim/features/` |
 | 3 | PatchTST pretraining, one model per outer fold, then its features | `gpua100` | Under an hour per fold | `runs/patchtst/fold1..5/` |
 | 4 | Gate-1 probe | `cpu_short` | Under 1 h | `runs/gate1/gate1-v1/` |
-| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference | `gpua100` | Minutes to an hour per job | `runs/planb/planb-v1-*/` |
+| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference; then Gate 2 and RUL | `gpua100`, `cpu_short` | Minutes to an hour per Plan B job; a few hours per Gate-2 job | `runs/planb/planb-v1-*/`, `runs/gate2/gate2-v1-*/`, `runs/rul/rul-v1-*/` |
 | 6 | Download caches and results | laptop | Minutes | `D:\Project14\data\interim\features`, `runs/` |
 
 The times are estimates. The first job of each kind tells you the real ones (§18).
@@ -70,8 +76,8 @@ The times are estimates. The first job of each kind tells you the real ones (§1
 | A Ruche account | As for OmniFuser |
 | This repository pushed to GitHub | `git push` after your commits; Ruche clones it (§4) |
 | A GitHub token with read access, or an SSH key on GitHub | The repository is private, so `git clone` asks for credentials (§4) |
-| The four window stores on the laptop | `python -m pdmfm.windows info` lists cwru, kaist, nonastreda and xjtu_sy |
-| About 40 GB free in `$WORKDIR` | Environment about 6 GB, weights about 4 GB, window stores about 2.5 GB, Paderborn several GB raw plus its store, caches and runs a few GB |
+| The five window stores on the laptop | `python -m pdmfm.windows info` lists cwru, kaist, matwi, nonastreda and xjtu_sy |
+| About 45 GB free in `$WORKDIR` | Environment about 6 GB, weights about 4 GB, window stores about 4.2 GB, Paderborn several GB raw plus its store, caches and runs a few GB |
 
 ### The path at a glance
 
@@ -82,7 +88,7 @@ The times are estimates. The first job of each kind tells you the real ones (§1
 5. **Step 0** checks (§11), then **Paderborn** (§12).
 6. **Feature caches** (§13) and **PatchTST** (§14), in parallel.
 7. **Gate 1** (§15) when steps 1-3 are complete.
-8. **Plan B** (§16) with the Gate-1 winner; then **download** (§17).
+8. **Plan B, Gate 2 and RUL** (§16) with the Gate-1 winner; then **download** (§17).
 
 ---
 
@@ -110,11 +116,12 @@ root, so they work there as they are:
 
 ```powershell
 cd D:\Project14\data
-tar -czf pdmfm-windows.tar.gz interim/windows/cwru interim/windows/xjtu_sy interim/windows/nonastreda interim/windows/kaist interim/features/images interim/features/texts
+tar -czf pdmfm-windows.tar.gz interim/windows/cwru interim/windows/xjtu_sy interim/windows/nonastreda interim/windows/matwi interim/windows/kaist interim/features/images interim/features/texts
 ```
 
-The archive is about 2.3 GB: the signals are float32 and compress little. KAIST is a target,
-used only from stage 8; leave it out if the upload is slow.
+The archive is about 4 GB: the signals are float32 and compress little (MATWI alone is
+1.7 GB). KAIST is a target, used only from stage 8; leave it out if the upload is slow. The
+MATWI photos never go to Ruche: their DINOv2 tokens are in `interim/features/images`.
 
 ## 2. Connect
 
@@ -182,7 +189,7 @@ tar -xzf "$WORKDIR/pdmfm-windows.tar.gz" -C "$WORKDIR/pdmfm_data" && rm "$WORKDI
 ls "$WORKDIR/pdmfm_data/interim/windows"
 ```
 
-The `ls` must list `cwru kaist nonastreda xjtu_sy` (without `kaist` if you left it out), and
+The `ls` must list `cwru kaist matwi nonastreda xjtu_sy` (without `kaist` if you left it out), and
 `ls "$WORKDIR/pdmfm_data/interim/features"` must list `images texts`.
 
 ## 6. Python environment
@@ -411,7 +418,7 @@ afterwards: only the new windows are encoded.
 
 ```bash
 sbatch --job-name=features-stats slurm/cpu.sbatch \
-  python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder stats --arms T F E
+  python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi paderborn --encoder stats --arms T F E
 ```
 
 **Mantis, MOMENT and AST** (one A100 each):
@@ -419,14 +426,16 @@ sbatch --job-name=features-stats slurm/cpu.sbatch \
 ```bash
 for encoder in mantis moment; do
   sbatch --job-name=features-$encoder --time=06:00:00 slurm/job.sbatch \
-    python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder $encoder --arms T F E --device cuda
+    python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi paderborn --encoder $encoder --arms T F E --device cuda
 done
 sbatch --job-name=features-ast --time=04:00:00 slurm/job.sbatch \
   python -m pdmfm.features extract --dataset cwru xjtu_sy paderborn --encoder ast --arms S --device cuda
 ```
 
 - The E arm exists only for the bearing datasets, and the S arm only at 12 kHz. The commands
-  skip those arms elsewhere, with a message (`no E arm; skipped`).
+  skip those arms elsewhere, with a message (`no E arm; skipped`). MATWI (milling, 1 kHz)
+  gets T and F only. Its handcrafted cache already exists on the laptop; encoding it here
+  keeps every compared encoder on one machine.
 - Each log shows one progress line per chunk, with the encoding rate in windows per second.
 - Mantis features exist on the laptop already. Encoding them again here takes minutes and
   keeps every compared encoder on one machine.
@@ -447,7 +456,7 @@ for k in 1 2 3 4 5; do
   job=$(sbatch --parsable --job-name=patchtst-fold$k --time=06:00:00 slurm/job.sbatch \
     python -m pdmfm.patchtst --fold $k --device cuda)
   sbatch --dependency=afterok:${job%%;*} --job-name=patchtst-fold$k-features --time=04:00:00 slurm/job.sbatch \
-    python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn \
+    python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi paderborn \
     --encoder patchtst --checkpoint runs/patchtst/fold$k/model --arms T F E --device cuda
 done
 ```
@@ -491,14 +500,14 @@ sbatch --job-name=gate1 slurm/cpu.sbatch python -m pdmfm.probe --run-id gate1-v1
 - If no frozen encoder beats your own PatchTST, the plan's Gate 1 picks the self-pretrained
   PatchTST.
 
-## 16. Step 5: Plan B
+## 16. Step 5: Plan B, Gate 2 and RUL
 
 Plan B is the plan's stage 4 and its fallback model: one evidential expert per modality,
 combined by Dempster's rule for the classes and by MoNIG for wear and RUL. It trains on the
 cached features, so it encodes nothing new. Each job runs the 5 outer folds × 3 seeds of one
 dataset and ends with a summary table. The laptop already ran it with Mantis on Nonastreda
-and XJTU-SY (`PROJECT_LOG.md`, week 5); here it runs with the Gate-1 winner, and on
-Paderborn.
+and XJTU-SY (`PROJECT_LOG.md`, week 5); here it runs with the Gate-1 winner, and on MATWI and
+Paderborn. Then Gate 2 (§16.6) and the RUL model (§16.7).
 
 **16.1 Take the encoder and arms from the Gate-1 winner** (after §15):
 
@@ -511,14 +520,14 @@ echo "encoder $ENCODER, arms $ARMS"
 
 The last line prints, for example, `encoder mantis, arms F` or `encoder patchtst-fold{fold},
 arms T E`. Keep `{fold}` as it is: Plan B then uses fold k's own PatchTST on fold k, as Gate 1
-did. Nonastreda has no E arm. If the winner's arms are E only, use `--arms F` for Nonastreda
-(its best arm in Gate 1).
+did. Nonastreda and MATWI have no E arm. If the winner's arms are E only, use `--arms F` for
+both milling sets (Nonastreda's best arm in Gate 1).
 
 **16.2 Tune on the inner-validation units** (one GPU job per dataset; it never reads test
 units):
 
 ```bash
-for dataset in nonastreda xjtu_sy paderborn; do
+for dataset in nonastreda matwi xjtu_sy paderborn; do
   sbatch --job-name=tune-$dataset --time=04:00:00 slurm/job.sbatch \
     python -m pdmfm.tune --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id tune-v1-$dataset --grid d=64,256 dropout=0.1,0.3 lr=3e-4,1e-3 --device cuda
 done
@@ -533,7 +542,7 @@ Nonastreda and d = 64 for XJTU-SY (`PROJECT_LOG.md`, week 5).
 reference and a photo-free Nonastreda run:
 
 ```bash
-for dataset in nonastreda xjtu_sy paderborn; do
+for dataset in nonastreda matwi xjtu_sy paderborn; do
   FLAGS=$(python -c "import json; print(json.load(open('runs/tune/tune-v1-$dataset/best.json'))['flags'])")
   echo "$dataset: $FLAGS"
   sbatch --job-name=planb-$dataset --time=02:00:00 slurm/job.sbatch \
@@ -583,6 +592,67 @@ sbatch --job-name=planb-paderborn-noslow --time=02:00:00 slurm/job.sbatch \
 
 Report both tables; I decide with you which one stands.
 
+**16.5 MATWI.** MATWI is the second paired image-sensor milling set (decision E): 17 tools,
+1,700 cuts, 11,043 windows; force, vibration and sound with a photo of the insert after
+every cut. Its outer folds hold 3-4 tools each and mix both materials
+(`pdmfm.protocols.MATWI_GROUPS`). It needs nothing beyond §13-§14 and the loops above. In its
+summary, compare the model with the `schedule` baseline: within a tool, wear rises with the
+cut number (Spearman 0.93), so a model must beat what the cut number alone predicts.
+
+**16.6 Gate 2: the fusion search** (one GPU job per multimodal dataset; XJTU-SY has one
+modality, so it has nothing to fuse):
+
+```bash
+for dataset in nonastreda matwi paderborn; do
+  sbatch --job-name=gate2-$dataset --time=12:00:00 slurm/job.sbatch \
+    python -m pdmfm.gate2 --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id gate2-v1-$dataset --device cuda
+done
+```
+
+- Each job trains 6 candidates (Plan B with its own recipe; late, concat, Perceiver, MBT and
+  C2F with the search recipe: AdamW 3e-4, cosine, input dropout 0.3) on the 4 inner folds of
+  each of the 5 outer folds: 120 fits. It never reads a test unit.
+- A log line per fit: `[gate2] nonastreda-fold1-inner2 perceiver: 0.612`. A job that reaches
+  its limit resumes from `results.csv` when you submit the same command again.
+- `bash slurm/status.sh` lists each search under `== Gate-2 searches` with the inner folds
+  done per candidate (20 each when complete) and the chosen model.
+- The result is in `runs/gate2/gate2-v1-<dataset>/`: `summary.md` (the ranking and the
+  verdict), `decision.json` (the model and its Plan B flags), `results.csv` (every fit).
+- The rule, fixed before any result: a fusion candidate replaces late fusion only if its mean
+  inner-validation score beats the better of `planb` and `late` by at least 0.01 and it wins
+  at least 60 % of the 20 paired folds. Otherwise Plan B stays the model.
+
+Then score the chosen model once on the outer test units (if it is `planb`, this repeats the
+§16.3 run with the same settings; that is harmless):
+
+```bash
+for dataset in nonastreda matwi paderborn; do
+  FLAGS=$(python -c "import json; print(json.load(open('runs/gate2/gate2-v1-$dataset/decision.json'))['flags'])")
+  echo "$dataset: $FLAGS"
+  sbatch --job-name=gate2-test-$dataset --time=04:00:00 slurm/job.sbatch \
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id gate2-v1-$dataset-test $FLAGS --device cuda
+done
+```
+
+**16.7 RUL from past snapshots** (XJTU-SY; CPU jobs are enough). History 1 is the
+single-snapshot control inside the same model; the history used in the report is the one with
+the best mean inner-validation score, never the best test score:
+
+```bash
+for h in 1 10 30; do
+  sbatch --job-name=rul-h$h --time=04:00:00 slurm/cpu.sbatch \
+    python -m pdmfm.rul --encoder "$ENCODER" --arms $ARMS --run-id rul-v1-xjtu-h$h --history $h --compare runs/planb/planb-v1-xjtu_sy
+done
+sbatch --job-name=rul-h10-noelapsed --time=04:00:00 slurm/cpu.sbatch \
+  python -m pdmfm.rul --encoder "$ENCODER" --arms $ARMS --run-id rul-v1-xjtu-h10-noelapsed --history 10 --no-elapsed --compare runs/planb/planb-v1-xjtu_sy
+```
+
+Each run writes `runs/rul/<run-id>/summary.md` (the same tables as Plan B, with the
+`schedule` baseline: the training bearings' mean RUL at the same snapshot number) and
+`comparison.csv` (its RMSE minus Plan B's, overall and after FPT, with 95 % intervals from
+resampling bearings). If the Gate-1 winner is Mantis with arms F E, the laptop runs of
+`PROJECT_LOG.md` (week 6) already answer this step.
+
 **Resuming.** A job that stops at its time limit continues when you submit the same command
 again: finished folds and seeds are skipped. The same `--run-id` with other settings is
 refused (`… holds a run with other settings; use another --run-id`), so a changed option
@@ -593,7 +663,7 @@ needs a new run id.
 Pack on Ruche (small; the login node is fine):
 
 ```bash
-cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/logs
+cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz
@@ -691,5 +761,5 @@ After the §10 block, from `$WORKDIR/pdmfm`:
 | 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder stats --arms T F E` and the §13 loop |
 | 3 | The §14 loop |
 | 4 | The §15 command |
-| 5 | §16.1 (winner), the §16.2 tuning loop, then the §16.3 Plan B loop |
+| 5 | §16.1 (winner), the §16.2 tuning loop, the §16.3 Plan B loop, then the §16.6 Gate-2 and §16.7 RUL loops |
 | 6 | §17 |

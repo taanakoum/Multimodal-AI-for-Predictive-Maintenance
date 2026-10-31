@@ -1,9 +1,12 @@
 """Metrics of the plan (section "Trust" and "Cross-validation and evaluation protocol").
 
-* Classes: accuracy, balanced accuracy, macro-F1; calibration as ECE (15 equal-width bins on
-  the top-class probability), multi-class Brier score and NLL. ``temperature_scale`` fits
-  one temperature on validation probabilities (p ** (1/T), renormalized), the plan's
-  post-hoc calibration.
+* Classes: accuracy, balanced accuracy, macro-F1, recall per class; calibration as ECE (15
+  equal-width bins on the top-class probability), multi-class Brier score and NLL. Ordered
+  classes (wear) add the mean absolute class error and the same metrics for the ordinal
+  median decision (:func:`ordinal_median`), which is parameter-free; both are reported,
+  argmax first (OmniFuser's finding: most errors are between neighbouring wear classes).
+  ``temperature_scale`` fits one temperature on validation probabilities (p ** (1/T),
+  renormalized), the plan's post-hoc calibration.
 * Regression: RMSE, MAE, Student-t NLL, coverage and mean width of the 90 % predictive
   interval; the PHM 2012 score for RUL. ``interval_scale`` fits one factor on the
   predictive scale on validation targets (decision D, 2026-10-29), as temperature scaling
@@ -20,16 +23,14 @@ from scipy import optimize, stats
 EPS = 1e-12
 
 
-def classification(y: np.ndarray, probs: np.ndarray) -> dict:
-    """Metrics of predicted class probabilities ``probs`` (n, K) against labels ``y`` (n,).
-    Macro-F1 and balanced accuracy average over the classes present in ``y`` (plan: a fold
-    without a healthy test bearing is not scored on the healthy class); predicting an
-    absent class still costs the recall of the true one."""
+def decisions(y: np.ndarray, predicted: np.ndarray) -> dict:
+    """Accuracy, balanced accuracy, macro-F1 and recall per class (``recall.<k>``) of hard
+    decisions. Macro-F1 and balanced accuracy average over the classes present in ``y``
+    (plan: a fold without a healthy test bearing is not scored on the healthy class);
+    predicting an absent class still costs the recall of the true one."""
     from sklearn.metrics import balanced_accuracy_score, f1_score
 
-    y = np.asarray(y)
-    probs = np.asarray(probs, dtype=float)
-    predicted = probs.argmax(1)
+    y, predicted = np.asarray(y), np.asarray(predicted)
     present = np.unique(y)
     with warnings.catch_warnings():  # "y_pred contains classes not in y_true": intended
         warnings.simplefilter("ignore", UserWarning)
@@ -40,11 +41,36 @@ def classification(y: np.ndarray, probs: np.ndarray) -> dict:
         "macro_f1": float(
             f1_score(y, predicted, labels=present, average="macro", zero_division=0.0)  # pyright: ignore[reportArgumentType]
         ),
+        "recall": {str(int(c)): float((predicted[y == c] == c).mean()) for c in present},
+    }
+
+
+def ordinal_median(probs: np.ndarray) -> np.ndarray:
+    """The median class of each row's distribution over ordered classes: the smallest k with
+    P(c <= k) >= 0.5. It minimizes the expected class distance |k - c|."""
+    cumulative = np.cumsum(np.asarray(probs, dtype=float), axis=1)
+    return (cumulative < 0.5 - 1e-12).sum(1)
+
+
+def classification(y: np.ndarray, probs: np.ndarray, ordinal: bool = False) -> dict:
+    """Metrics of predicted class probabilities ``probs`` (n, K) against labels ``y`` (n,);
+    argmax decisions. ``ordinal`` (ordered classes) adds the mean absolute class error
+    ``mace`` and ``ordinal``: the metrics of the ordinal median decision."""
+    y = np.asarray(y)
+    probs = np.asarray(probs, dtype=float)
+    predicted = probs.argmax(1)
+    out = {
+        **decisions(y, predicted),
         "ece": ece(y, probs),
         "brier": brier(y, probs),
         "nll": nll(y, probs),
         "n": int(len(y)),
     }
+    if ordinal:
+        median = ordinal_median(probs)
+        out["mace"] = float(np.abs(predicted - y).mean())
+        out["ordinal"] = {**decisions(y, median), "mace": float(np.abs(median - y).mean())}
+    return out
 
 
 def ece(y: np.ndarray, probs: np.ndarray, bins: int = 15) -> float:

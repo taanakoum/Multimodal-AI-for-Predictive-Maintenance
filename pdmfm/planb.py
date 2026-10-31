@@ -8,7 +8,8 @@ temperature on its inner-validation units; score its test units:
   calibration on the inner-validation units: temperature scaling for the classes, one
   interval scale for wear and RUL (decision D). Accuracy, balanced accuracy, macro-F1, ECE,
   Brier, NLL; RMSE, MAE, Student-t NLL, 90 % interval coverage and width, PHM 2012 score;
-* every modality alone, and the combination without each modality (missing-modality test);
+* every modality alone, and the model without each modality (missing-modality test: the
+  modality marked absent at prediction time, so a fusion stage loses it too);
 * baselines: majority class (training prior), persistence (Nonastreda: the previous pass's
   label and wear), and the training mean for regression.
 
@@ -16,7 +17,9 @@ Results: ``runs/planb/<run-id>/fold<k>-seed<s>.json`` with the test predictions 
 beside it (written atomically; a rerun skips finished folds and seeds), then
 ``summary.csv`` and ``summary.md``. Paired tests across fold x seed come later (report stage).
 
-Inputs are assembled once, or once per fold when they depend on it: ``{fold}`` in the
+``--fusion`` trains a Gate-2 candidate (:mod:`pdmfm.model.fusion`) instead; its fused head
+is also scored alone (``only_fused``). Inputs are assembled once, or once per fold when they
+depend on it: ``{fold}`` in the
 encoder name (``patchtst-fold{fold}``: fold k's own PatchTST) or a level baseline made of the
 fold's training units (Paderborn).
 
@@ -38,14 +41,18 @@ import torch
 from pdmfm import losses, protocols
 from pdmfm import metrics as M
 from pdmfm import stats as S
+from pdmfm.model.fusion import FUSIONS
 from pdmfm.model.inputs import FOLD_BASELINE, LEVEL_MODES, MAX_PHOTO_LAG, TaskInputs, assemble
 from pdmfm.paths import REPO_ROOT
 from pdmfm.train import TrainConfig, bag_mean, fit, predict
 from pdmfm.utils import stable_hash, write_json_atomic
 from pdmfm.windows import WindowStore
 
+# Ordered label spaces (wear classes sharp < used < dulled): ordinal metrics are added.
+ORDINAL = ("nonastreda", "matwi")
 FOLDS = {
     "nonastreda": protocols.nonastreda_fold,
+    "matwi": protocols.matwi_fold,
     "xjtu_sy": protocols.xjtu_fold,
     "paderborn": protocols.paderborn_fold,
 }
@@ -58,21 +65,6 @@ def _probs(evidence: np.ndarray) -> np.ndarray:
     return losses.expected_probability(
         torch.from_numpy(np.asarray(evidence, dtype=np.float32))
     ).numpy()
-
-
-def _recombine(pred: dict, keep: list[int]) -> dict:
-    """Combined opinion and fused NIG from the modalities in ``keep`` only."""
-    out = {}
-    if "evidence" in pred:
-        out["combined"] = losses.ds_combine_all(torch.from_numpy(pred["evidence"][:, keep]))[
-            0
-        ].numpy()
-    if "nig" in pred:
-        present = torch.from_numpy(pred["present"][:, keep])
-        out["fused_nig"] = losses.nig_fuse_all(
-            torch.from_numpy(pred["nig"][:, keep]), present
-        ).numpy()
-    return out
 
 
 def _classes(inputs: TaskInputs, rows, evidence, temperature: float | None = None) -> dict:
@@ -92,9 +84,10 @@ def _classes(inputs: TaskInputs, rows, evidence, temperature: float | None = Non
             M.apply_temperature(window, temperature),
             M.apply_temperature(bag, temperature),
         )
+    ordinal = inputs.dataset in ORDINAL
     return {
-        "window": M.classification(y[keep], window),
-        "bag": M.classification(bag_y.round().astype(int), bag),
+        "window": M.classification(y[keep], window, ordinal),
+        "bag": M.classification(bag_y.round().astype(int), bag, ordinal),
     }
 
 
@@ -103,6 +96,34 @@ def student_t(nig: np.ndarray, y_mean: float, y_std: float):
     params = torch.from_numpy(np.asarray(nig, dtype=np.float32))
     dof, scale = (t.numpy() for t in losses.nig_predictive_scale(params))
     return np.asarray(nig)[:, 0] * y_std + y_mean, dof, scale * y_std
+
+
+def score_regression(
+    target: np.ndarray,
+    nig: np.ndarray,
+    y_mean: float,
+    y_std: float,
+    interval: float = 1.0,
+    rul: bool = False,
+) -> dict:
+    """Regression metrics of NIG outputs (standardized) against ``target``; ``interval``
+    multiplies the predictive scale. RUL adds the PHM 2012 score and the same metrics after
+    the first prediction time."""
+    mean, dof, scale = student_t(np.asarray(nig, dtype=np.float32), y_mean, y_std)
+    out = M.regression(target, mean, dof, scale * interval)
+    if rul:
+        out["phm2012"] = M.phm2012_score(target, np.clip(mean, 0.0, 1.0))
+        # Normalized RUL is 1 until the first prediction time: the degradation phase is
+        # where the prognosis matters, so it is scored on its own as well.
+        post = target < 1.0 - 1e-6
+        if post.any():
+            out["post_fpt"] = M.regression(
+                target[post], mean[post], dof[post], scale[post] * interval
+            )
+            out["post_fpt"]["phm2012"] = M.phm2012_score(
+                target[post], np.clip(mean[post], 0.0, 1.0)
+            )
+    return out
 
 
 def _regression(
@@ -115,29 +136,12 @@ def _regression(
     if not keep.any():
         return {}
     bags = inputs.manifest["bag"].astype(str).to_numpy()[rows][keep]
-
-    def scored(params, target):
-        mean, dof, scale = student_t(params, y_mean, y_std)
-        out = M.regression(target, mean, dof, scale * interval)
-        if inputs.regression_target == "rul":
-            out["phm2012"] = M.phm2012_score(target, np.clip(mean, 0.0, 1.0))
-            # Normalized RUL is 1 until the first prediction time: the degradation phase is
-            # where the prognosis matters, so it is scored on its own as well.
-            post = target < 1.0 - 1e-6
-            if post.any():
-                out["post_fpt"] = M.regression(
-                    target[post], mean[post], dof[post], scale[post] * interval
-                )
-                out["post_fpt"]["phm2012"] = M.phm2012_score(
-                    target[post], np.clip(mean[post], 0.0, 1.0)
-                )
-        return out
-
+    rul = inputs.regression_target == "rul"
     _, bag_nig = bag_mean(nig[keep], bags)
     _, bag_y = bag_mean(y[keep], bags)
     return {
-        "window": scored(nig[keep].astype(np.float32), y[keep]),
-        "bag": scored(bag_nig.astype(np.float32), bag_y),
+        "window": score_regression(y[keep], nig[keep], y_mean, y_std, interval, rul),
+        "bag": score_regression(bag_y, bag_nig, y_mean, y_std, interval, rul),
     }
 
 
@@ -148,6 +152,10 @@ def _trust(pred: dict, names: list[str]) -> dict:
         return {}
     _, u = losses.opinion(torch.from_numpy(pred["combined"]))
     out = {"uncertainty": float(u.mean()), "conflict": float(pred["conflict"].sum(-1).mean())}
+    if "fused_evidence" in pred:
+        anything = pred["present"].any(1)
+        _, uf = losses.opinion(torch.from_numpy(pred["fused_evidence"][anything]))
+        out["trust_fused"] = float((1 - uf).mean())
     for m, name in enumerate(names):
         present = pred["present"][:, m]
         if present.any():
@@ -165,10 +173,13 @@ def evaluate(
     temperature: float | None,
     interval_scale: float | None = None,
     stale: dict[int, dict] | None = None,
+    dropped: dict[str, dict] | None = None,
 ) -> dict:
     """Every result variant of one part. ``stale`` maps a photo lag to the predictions made
-    with the photos of that many passes back (the staleness test)."""
+    with the photos of that many passes back (the staleness test); ``dropped`` maps a
+    modality to the predictions made without it (:func:`without_each`)."""
     names = list(inputs.modalities)
+    anything = pred["present"].any(1)
     result: dict = {"trust": _trust(pred, names)}
     if "combined" in pred:
         result["combined"] = _classes(inputs, rows, pred["combined"])
@@ -180,6 +191,10 @@ def evaluate(
                 result[f"only_{name}"] = _classes(
                     inputs, rows[present], pred["evidence"][present, m]
                 )
+        if "fused_evidence" in pred:
+            result["only_fused"] = _classes(
+                inputs, rows[anything], pred["fused_evidence"][anything]
+            )
     if "fused_nig" in pred:
         result.setdefault("regression", {})["combined"] = _regression(
             inputs, rows, pred["fused_nig"], y_mean, y_std
@@ -194,15 +209,19 @@ def evaluate(
                 result["regression"][f"only_{name}"] = _regression(
                     inputs, rows[present], pred["nig"][present, m], y_mean, y_std
                 )
-    if len(names) > 1:  # missing-modality robustness: the same model without one modality
-        for m, name in enumerate(names):
-            again = _recombine(pred, [j for j in range(len(names)) if j != m])
-            if "combined" in again:
-                result[f"without_{name}"] = _classes(inputs, rows, again["combined"])
-            if "fused_nig" in again:
-                result["regression"][f"without_{name}"] = _regression(
-                    inputs, rows, again["fused_nig"], y_mean, y_std
-                )
+        if "fused_own_nig" in pred:
+            result["regression"]["only_fused"] = _regression(
+                inputs, rows[anything], pred["fused_own_nig"][anything], y_mean, y_std
+            )
+    for name, again in (dropped or {}).items():  # missing-modality robustness
+        # Rows whose only modality was dropped have no input left; they are not scored.
+        left = again["present"].any(1)
+        if "combined" in again:
+            result[f"without_{name}"] = _classes(inputs, rows[left], again["combined"][left])
+        if "fused_nig" in again:
+            result.setdefault("regression", {})[f"without_{name}"] = _regression(
+                inputs, rows[left], again["fused_nig"][left], y_mean, y_std
+            )
     for lag, older in (stale or {}).items():
         if "combined" in older:
             result[f"photo_lag{lag}"] = _classes(inputs, rows, older["combined"])
@@ -211,6 +230,15 @@ def evaluate(
                 inputs, rows, older["fused_nig"], y_mean, y_std
             )
     return result
+
+
+def without_each(model, inputs: TaskInputs, rows: np.ndarray, cfg: TrainConfig) -> dict:
+    """The predictions without each modality in turn (marked absent at prediction time).
+    For late fusion this equals combining the other experts' opinions; a fusion stage also
+    loses the modality's tokens."""
+    if len(inputs.modalities) < 2:
+        return {}
+    return {name: predict(model, inputs, rows, cfg, drop=(name,)) for name in inputs.modalities}
 
 
 def _fit_summary(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std: float) -> dict:
@@ -226,15 +254,18 @@ def _fit_summary(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std: flo
 
 
 def _bag_predictions(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std: float):
-    """Per test bag: the combined class (argmax of the mean evidence) and wear or RUL (mean
-    NIG location); calibration changes neither."""
+    """Per test bag: the combined class (argmax of the mean evidence; for ordered classes
+    also the ordinal median) and wear or RUL (mean NIG location); calibration changes
+    neither."""
     bags = inputs.manifest["bag"].astype(str).to_numpy()[rows]
     table = pd.DataFrame({"bag": pd.unique(bags)})
     if "combined" in pred:
         keys, evidence = bag_mean(pred["combined"], bags)
-        table["pred_class"] = (
-            pd.Series(_probs(evidence).argmax(1), index=keys).loc[table["bag"]].to_numpy()
-        )
+        probs = _probs(evidence)
+        table["pred_class"] = pd.Series(probs.argmax(1), index=keys).loc[table["bag"]].to_numpy()
+        if inputs.dataset in ORDINAL:
+            median = pd.Series(M.ordinal_median(probs), index=keys)
+            table["pred_class_ordinal"] = median.loc[table["bag"]].to_numpy()
     if "fused_nig" in pred:
         keys, nig = bag_mean(pred["fused_nig"], bags)
         mean = nig[:, 0] * y_std + y_mean
@@ -245,15 +276,23 @@ def _bag_predictions(inputs: TaskInputs, rows, pred: dict, y_mean: float, y_std:
 def baseline_table(
     inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray
 ) -> pd.DataFrame:
-    """One row per test bag (in time order per unit where bags follow each other: Nonastreda
-    passes, XJTU-SY snapshots): its unit and labels, and the majority, persistence and
-    training-mean predictions. Persistence is the previous bag's true label or wear of the
-    same unit; a unit's first bag falls back to the training majority or mean."""
+    """One row per test bag (in time order per unit where bags follow each other: milling
+    passes and cuts, XJTU-SY snapshots): its unit and labels, and the majority, persistence,
+    schedule and training-mean predictions. Persistence is the previous bag's true label or
+    wear of the same unit; a unit's first bag falls back to the training majority or mean.
+    The schedule baseline knows only the bag's position in its unit's life (pass, cut or
+    snapshot number): the training units' majority class and mean target at that position
+    (OmniFuser's run-number shortcut: 71 % on held-out tools, above its model)."""
     manifest = inputs.manifest
     first = manifest.iloc[test_rows].groupby("bag", sort=False).head(1)
+    trained = manifest.iloc[train_rows].groupby("bag", sort=False).head(1)
     time_key = next((k for k in ("meta_t_start", "meta_minute") if k in manifest), None)
     if time_key:
         first = first.sort_values(["unit", time_key])
+        trained = trained.sort_values(["unit", time_key])
+    # Positions in each unit's life; used only where bags are in time order (time_key).
+    train_position = trained.groupby("unit").cumcount().to_numpy()
+    test_position = first.groupby("unit").cumcount().to_numpy()
     index = first.index.to_numpy()
     table = pd.DataFrame(
         {"bag": first["bag"].astype(str).to_numpy(), "unit": first["unit"].astype(str).to_numpy()}
@@ -269,6 +308,12 @@ def baseline_table(
                 positions.get(p, int(prior.argmax())) if isinstance(p, str) else int(prior.argmax())
                 for p in previous
             ]
+            y_train = inputs.y_class[trained.index.to_numpy()]
+            labelled = y_train >= 0
+            table["schedule"] = _schedule(
+                train_position[labelled], y_train[labelled], test_position, int(prior.argmax()),
+                lambda v: int(np.bincount(v).argmax()),
+            )  # fmt: skip
     if inputs.y_reg is not None:
         mean = float(np.nanmean(inputs.y_reg[train_rows]))
         y = inputs.y_reg[index]
@@ -277,7 +322,22 @@ def baseline_table(
         if time_key and inputs.regression_target == "wear_um":
             previous = pd.Series(y).groupby(table["unit"].to_numpy()).shift(1)
             table["persistence_reg"] = previous.fillna(mean).to_numpy()
+        if time_key:
+            y_train = inputs.y_reg[trained.index.to_numpy()]
+            known = np.isfinite(y_train)
+            table["schedule_reg"] = _schedule(
+                train_position[known], y_train[known], test_position, mean, np.mean
+            )
     return table
+
+
+def _schedule(train_position, train_value, test_position, fallback, summary) -> np.ndarray:
+    """``summary`` of the training values at each test position; ``fallback`` where no
+    training unit reaches that position."""
+    by_position = {
+        int(p): summary(train_value[train_position == p]) for p in np.unique(train_position)
+    }
+    return np.array([by_position.get(int(p), fallback) for p in test_position])
 
 
 def _prior(inputs: TaskInputs, train_rows: np.ndarray) -> np.ndarray:
@@ -295,16 +355,19 @@ def baselines(inputs: TaskInputs, train_rows: np.ndarray, test_rows: np.ndarray)
         keep = (table["y_class"] >= 0).to_numpy()
         y = table["y_class"].to_numpy()[keep]
         prior = _prior(inputs, train_rows)
-        out["majority"] = M.classification(y, np.tile(prior, (len(y), 1)))
-        if "persistence" in table:
-            guess = table["persistence"].to_numpy()[keep]
-            out["persistence"] = M.classification(y, np.eye(len(inputs.classes))[guess])
+        ordinal = inputs.dataset in ORDINAL
+        out["majority"] = M.classification(y, np.tile(prior, (len(y), 1)), ordinal)
+        for name in ("persistence", "schedule"):
+            if name in table:
+                guess = table[name].to_numpy()[keep]
+                out[name] = M.classification(y, np.eye(len(inputs.classes))[guess], ordinal)
     if "y_reg" in table:
         y = table["y_reg"].to_numpy()
         keep = np.isfinite(y)
         for name, column in (
             ("train_mean", "train_mean"),
             ("persistence_regression", "persistence_reg"),
+            ("schedule_regression", "schedule_reg"),
         ):
             if column in table:
                 error = y[keep] - table[column].to_numpy()[keep]
@@ -456,10 +519,26 @@ def run(
                 "temperature": temperature,
                 "interval_scale": interval,
                 "n_params": int(trainable),
-                "validation": evaluate(inputs, val_rows, val_pred, y_mean, y_std, None),
+                "validation": evaluate(
+                    inputs,
+                    val_rows,
+                    val_pred,
+                    y_mean,
+                    y_std,
+                    None,
+                    dropped=without_each(fitted.model, inputs, val_rows, cfg),
+                ),  # fmt: skip
                 "test": evaluate(
-                    inputs, test_rows, test_pred, y_mean, y_std, temperature, interval, stale
-                ),
+                    inputs,
+                    test_rows,
+                    test_pred,
+                    y_mean,
+                    y_std,
+                    temperature,
+                    interval,
+                    stale,
+                    without_each(fitted.model, inputs, test_rows, cfg),
+                ),  # fmt: skip
                 "train": _fit_summary(inputs, train_rows, train_pred, y_mean, y_std),
                 "baselines": baselines(inputs, train_rows, test_rows),
                 "history": fitted.history,
@@ -549,12 +628,24 @@ def pooled_summary(out: Path, n: int | None = None) -> pd.DataFrame:
     def difference(a, b):
         return lambda f: a(f) - b(f)
 
+    def changed_accuracy(column):
+        """Accuracy on the bags whose class differs from the unit's previous bag (where
+        persistence is wrong): what a prognosis adds over copying the last label."""
+
+        def statistic(f):
+            keep = (f["y_class"] >= 0) & (f["persistence"] != f["y_class"])
+            return float(np.mean(f[column][keep] == f["y_class"][keep])) if keep.any() else np.nan
+
+        return statistic
+
     if {"y_class", "pred_class"} <= columns:
         f1 = {
             name: f1_of(column)
             for name, column in (
                 ("model", "pred_class"),
+                ("model, ordinal median", "pred_class_ordinal"),
                 ("persistence", "persistence"),
+                ("schedule", "schedule"),
                 ("majority", "majority"),
             )
             if column in columns
@@ -563,14 +654,21 @@ def pooled_summary(out: Path, n: int | None = None) -> pd.DataFrame:
         quantities += [
             (f"macro-F1, model - {name}", difference(f1["model"], fn))
             for name, fn in f1.items()
-            if name != "model"
+            if not name.startswith("model")
         ]
+        if "persistence" in columns:
+            quantities += [("accuracy where the class changes, model",
+                            changed_accuracy("pred_class"))]  # fmt: skip
+            if "schedule" in columns:
+                quantities += [("accuracy where the class changes, schedule",
+                                changed_accuracy("schedule"))]  # fmt: skip
     if {"y_reg", "pred_reg"} <= columns:
         error = {
             name: rmse_of(column)
             for name, column in (
                 ("model", "pred_reg"),
                 ("persistence", "persistence_reg"),
+                ("schedule", "schedule_reg"),
                 ("training mean", "train_mean"),
             )
             if column in columns
@@ -587,6 +685,8 @@ def pooled_summary(out: Path, n: int | None = None) -> pd.DataFrame:
                 ("RMSE after FPT, model", rmse_of("pred_reg", after_fpt=True)),
                 ("RMSE after FPT, training mean", rmse_of("train_mean", after_fpt=True)),
             ]
+            if "schedule_reg" in columns:
+                quantities += [("RMSE after FPT, schedule", rmse_of("schedule_reg", True))]
     records = []
     for name, statistic in quantities:
         estimate, low, high = S.unit_bootstrap(
@@ -651,7 +751,7 @@ def _markdown(
             bag, window = f"test.{k}.bag", f"test.{k}.window"
             metrics = [f"{bag}.macro_f1", f"{bag}.balanced_accuracy", f"{bag}.accuracy"]
             lines.append(_row(summary, k, [*metrics, f"{window}.ece", f"{window}.nll"]))
-        for name in ("majority", "persistence"):
+        for name in ("majority", "persistence", "schedule"):
             base = f"baselines.{name}"
             if f"{base}.macro_f1" in summary.index:
                 metrics = [f"{base}.macro_f1", f"{base}.balanced_accuracy", f"{base}.accuracy"]
@@ -682,7 +782,7 @@ def _markdown(
                 lines.append(
                     _row(summary, f"{k}, after FPT", [f"{base}.post_fpt.{n}" for n in names])
                 )
-        for name in ("train_mean", "persistence_regression"):
+        for name in ("train_mean", "persistence_regression", "schedule_regression"):
             base = f"baselines.{name}"
             if f"{base}.rmse" in summary.index:
                 lines.append(
@@ -753,6 +853,16 @@ def main(argv: list[str] | None = None) -> None:
         choices=("prototype", "projected", "linear"),
         help="class head: Qwen prototypes, prototypes through a learned W_t, or free linear",
     )
+    parser.add_argument(
+        "--fusion", default="late", choices=FUSIONS, help="late (Plan B) or a Gate-2 candidate"
+    )
+    parser.add_argument(
+        "--input-dropout",
+        type=float,
+        default=0.0,
+        help="drop whole modalities from the inputs in training (fusion search: 0.3)",
+    )
+    parser.add_argument("--schedule", default="constant", choices=("constant", "cosine"))
     parser.add_argument("--no-photos", action="store_true", help="sensor modalities only")
     parser.add_argument(
         "--without",
@@ -790,6 +900,9 @@ def main(argv: list[str] | None = None) -> None:
         photo_lags=args.photo_lags,
         photo_views=args.photo_views,
         head=args.head,
+        fusion=args.fusion,
+        input_dropout=args.input_dropout,
+        schedule=args.schedule,
         device=args.device,
     )
     started = time.perf_counter()

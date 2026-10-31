@@ -287,13 +287,26 @@ class DinoV2Encoder:
     """DINOv2-S/14 photo tokens: class token + patch grid average-pooled to a small grid.
 
     Tool photos (3.1:1) are resized to 224x672 and pooled to 2x4 (9 tokens); chip, workpiece
-    and thermal images to 224x224 and 2x2 (5 tokens)."""
+    and thermal images to 224x224 and 2x2 (5 tokens); MATWI insert crops (1.5:1) to 224x336
+    and 2x3 (7 tokens)."""
 
     name = "dinov2"
     dim = 384
     repo = "facebook/dinov2-small"
-    SIZE = {"tool": (224, 672), "chip": (224, 224), "workpiece": (224, 224), "thermal": (224, 224)}
-    GRID = {"tool": (2, 4), "chip": (2, 2), "workpiece": (2, 2), "thermal": (2, 2)}
+    SIZE = {
+        "tool": (224, 672),
+        "chip": (224, 224),
+        "workpiece": (224, 224),
+        "thermal": (224, 224),
+        "insert": (224, 336),  # MATWI insert crops, 600 x 400 px
+    }
+    GRID = {
+        "tool": (2, 4),
+        "chip": (2, 2),
+        "workpiece": (2, 2),
+        "thermal": (2, 2),
+        "insert": (2, 3),
+    }
 
     # DINOv2's processor normalizes with the ImageNet statistics; using them directly avoids
     # needing its preprocessor config in an offline cache.

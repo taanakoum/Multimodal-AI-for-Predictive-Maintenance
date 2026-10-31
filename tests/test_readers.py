@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 from PIL import Image
 from scipy.io import savemat
@@ -10,6 +11,7 @@ from scipy.io import savemat
 from pdmfm.datasets import get_reader
 from pdmfm.datasets.kaist import normalize_name, parse_condition
 from pdmfm.datasets.najafi import parse_folder
+from pdmfm.schema import as_of_join
 
 RNG = np.random.default_rng(0)
 
@@ -395,3 +397,115 @@ def test_nasa_milling_reader(tmp_path):
 def test_unknown_reader():
     with pytest.raises(KeyError):
         get_reader("nope")
+
+
+# ----------------------------------------------------------------------------- MATWI
+
+
+def write_matwi(root, shifted_row: bool = True):
+    """A MATWI layout: sets.csv, labels.csv and per-set sensor CSVs and photos.
+
+    Set 1 has four cuts; its labels.csv rows are shifted by one cut after the second (the
+    publisher's synchronisation error), and its third cut has no photo. Set 2 has two
+    inserts photographed in turn. Times are seconds after 2023-01-01 08:00."""
+    from PIL import Image
+
+    base = pd.Timestamp("2023-01-01 08:00:00")
+    sets = pd.DataFrame(
+        {
+            "Unnamed: 0": ["Set 1", "Set 2"], "Vc": ["?", 120], "n": ["?", 2547],
+            "fz": ["?", 0.03], "Vf": ["?", 76], "Ae": [1, 1], "Ap": [1.0, 1.0],
+            "material": ["CK45", "RVS 304"], "crop": ["10, 10, 70, 50", "10, 10, 70, 50"],
+            "Coating": [None, None], "z": [1, 2],
+        }
+    )  # fmt: skip
+    sets.to_csv(root / "sets.csv", index=False)
+    rng = np.random.default_rng(0)
+
+    def cut(set_no, i, start, photo, wear):
+        sensor = f"Set{set_no}/sensordata/cut_{set_no}_{i}.csv"
+        n = int(9.0 / 0.000611)  # 9 s at 1/0.000611 Hz
+        stamps = pd.date_range(
+            base + pd.Timedelta(seconds=start),
+            base + pd.Timedelta(seconds=start + (n - 1) * 0.000611),
+            periods=n,
+        ).astype(str)
+        values = rng.normal(0, 1, (n, 5)).round(4)
+        values[:, 2] += 100.0 + wear  # Fx level follows the wear
+        (root / sensor).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(values).assign(t=stamps).to_csv(root / sensor, header=False, index=False)
+        image = None
+        if photo is not None:
+            image = f"Set{set_no}/images/photo_{set_no}_{i}.jpg"
+            (root / image).parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (80, 60), (int(wear) % 255, 50, 50)).save(root / image)
+        return sensor, image, start, photo
+
+    def row(set_no, sensor, photo, wear):
+        stamp = None if photo is None else str(base + pd.Timedelta(seconds=photo[3]))
+        return {
+            "ImageName": None if photo is None else photo[1].split("/")[-1],
+            "SensorName": sensor[0].split("/")[-1],
+            "Set": set_no,
+            "wear": wear,
+            "type": None if photo is None else "flank_wear",
+            "ImageDateTime": stamp,
+            "SensorDateTime": str(base + pd.Timedelta(seconds=sensor[2])),
+            "ImageFile": None if photo is None else "MATWI/" + photo[1],
+            "SensorFile": "MATWI/" + sensor[0],
+        }
+
+    set1 = [
+        cut(1, i, 100 * i, None if i == 2 else 100 * i + 15, w)
+        for i, w in enumerate((30, 60, 90, 120))
+    ]
+    # Rows: cut 0 + photo 0, cut 1 + photo 1, then shifted: cut 2 + photo 3, cut 3 alone.
+    rows = [row(1, set1[0], set1[0], 30), row(1, set1[1], set1[1], 60)]
+    if shifted_row:
+        rows += [row(1, set1[2], set1[3], 120), row(1, set1[3], None, None)]
+    # Set 2, two inserts: photos alternate between insert A (30, 40) and insert B (80, 90).
+    for i, wear in enumerate((30, 80, 40, 90)):
+        c = cut(2, i, 100 * i, 100 * i + 15, wear)
+        rows.append(row(2, c, c, wear))
+    pd.DataFrame(rows).to_csv(root / "labels.csv", index=False)
+
+
+def test_matwi_labels_follow_the_photo_timestamps(tmp_path):
+    from pdmfm.datasets.matwi import MATWI
+
+    write_matwi(tmp_path)
+    infos = MATWI(tmp_path).index()
+    set1 = [i for i in infos if i.unit == "Set01"]
+    # The shifted row pairs cut 2 with photo 3: by timestamps, cut 2 has no photo
+    # (unlabelled) and cut 3 is labelled with photo 3's wear.
+    assert [i.meta["wear_um"] for i in set1][:2] == [30, 60]
+    assert np.isnan(set1[2].meta["wear_um"]) and set1[2].label is None
+    assert set1[3].meta["wear_um"] == 120 and set1[3].label == "dulled"
+    assert [i.label for i in set1[:2]] == ["sharp", "sharp"]
+    # Two inserts: the worse of the latest photo of each insert.
+    assert [i.meta["wear_um"] for i in infos if i.unit == "Set02"] == [30, 80, 80, 90]
+    assert infos[0].condition["speed_text"] == "an unrecorded spindle speed"
+
+
+def test_matwi_recordings_photos_and_crops(tmp_path):
+    from PIL import Image
+
+    from pdmfm.datasets.matwi import MATWI
+
+    write_matwi(tmp_path)
+    reader = MATWI(tmp_path)
+    assert reader.prepare_crops(log=lambda *_: None) == 7  # every photo, once
+    assert reader.prepare_crops(log=lambda *_: None) == 0
+    infos = reader.index()
+    recording = reader.load(infos[0])
+    assert set(recording.channels) == {"acc", "mic", "fx", "fy", "fz"}
+    fx = recording.channels["fx"]
+    assert fx.rate_hz == 1000.0 and abs(len(fx.signal) - 9000) <= 2  # resampled to 1 kHz
+    assert recording.channels["mic"].family == "acoustic"
+    assert recording.targets["wear_um"] == 30
+    (photo,) = recording.images  # taken after this cut, before the next
+    assert photo.captured_at > recording.t_offset and photo.kind == "insert"
+    assert Image.open(photo.path).size == (60, 40)  # the set's crop box
+    # The as-of join attaches it to the next cut, never to this one.
+    assert as_of_join(recording.images, recording.t_offset) == ()
+    assert as_of_join(recording.images, infos[1].meta["t_start"]) == (photo,)

@@ -151,3 +151,26 @@ def test_class_metrics_average_over_the_classes_present():
     wrong = M.classification(y, np.eye(3)[[0, 2, 1, 1]])
     assert wrong["macro_f1"] == pytest.approx((2 / 3 + 1) / 2)
     assert wrong["balanced_accuracy"] == pytest.approx((0.5 + 1) / 2)
+
+
+def test_ordinal_median_is_the_class_of_the_middle_probability_mass():
+    probs = np.array(
+        [[0.45, 0.10, 0.45],  # argmax: sharp (first of a tie); the median: used
+         [0.60, 0.30, 0.10],
+         [0.20, 0.25, 0.55],
+         [0.50, 0.00, 0.50]]  # exactly half at or below sharp: sharp
+    )  # fmt: skip
+    np.testing.assert_array_equal(M.ordinal_median(probs), [1, 0, 2, 0])
+
+
+def test_ordinal_metrics_count_the_class_distance():
+    y = np.array([0, 1, 2, 1])
+    probs = np.array([[0.9, 0.05, 0.05], [0.45, 0.1, 0.45], [0.1, 0.2, 0.7], [0.0, 0.1, 0.9]])
+    out = M.classification(y, probs, ordinal=True)
+    assert out["accuracy"] == pytest.approx(0.5)  # argmax: 0, 0, 2, 2
+    assert out["mace"] == pytest.approx((0 + 1 + 0 + 1) / 4)
+    assert out["recall"] == {"0": 1.0, "1": 0.0, "2": 1.0}
+    assert out["ordinal"]["accuracy"] == pytest.approx(0.75)  # median: 0, 1, 2, 2
+    assert out["ordinal"]["mace"] == pytest.approx(0.25)
+    assert out["ordinal"]["recall"]["1"] == pytest.approx(0.5)
+    assert "ordinal" not in M.classification(y, probs)

@@ -73,6 +73,8 @@ def test_status_runs_without_squeue(tmp_path):
         "== PatchTST",
         "== Gate-1",
         "== Plan B",
+        "== Gate-2",
+        "== RUL",
     ):
         assert header in result.stdout
 
@@ -87,3 +89,20 @@ def test_status_counts_plan_b_results(tmp_path):
     result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert "planb-v1-nonastreda: 2 of 15" in result.stdout and "summary.md" in result.stdout
+
+
+def test_status_counts_gate2_and_rul_results(tmp_path):
+    gate2 = tmp_path / "runs" / "gate2" / "gate2-v1-nonastreda"
+    gate2.mkdir(parents=True)
+    rows = ["candidate,outer,split,score", "planb,1,a,0.5", "planb,1,b,0.5", "concat,1,a,0.6"]
+    (gate2 / "results.csv").write_text("\n".join(rows) + "\n")
+    (gate2 / "decision.json").write_text('{"model": "planb"}')
+    rul = tmp_path / "runs" / "rul" / "rul-v1-xjtu"
+    rul.mkdir(parents=True)
+    (rul / "fold1-seed0.json").write_text("{}")
+    shutil.copytree(SLURM, tmp_path / "slurm")
+    env = {**os.environ, "PDMFM_DATA_ROOT": str(tmp_path / "data")}
+    result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "gate2-v1-nonastreda: concat 1, planb 2; model planb" in result.stdout
+    assert "rul-v1-xjtu: 1 of 15" in result.stdout

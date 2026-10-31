@@ -1,6 +1,7 @@
 #!/bin/bash
 # One-screen overview: your jobs, the window stores, the feature caches, the PatchTST
-# pretraining runs, the Gate-1 and Plan B runs, logs that contain errors, and disk use.
+# pretraining runs, the Gate-1, Plan B, Gate-2 and RUL runs, logs that contain errors, and
+# disk use.
 # Usage, from anywhere:  source slurm/env.sh && bash slurm/status.sh
 # It only reads files, so it may run on the login node.
 cd "$(dirname "$0")/.." || exit 1
@@ -61,6 +62,37 @@ for folder in runs/planb/*/; do
     summary=""
     [ -f "${folder}summary.md" ] && summary="  summary: ${folder}summary.md"
     echo "  $(basename "$folder"): $n of 15$summary"
+done
+[ "$found" -eq 1 ] || echo "  none yet"
+
+echo
+echo "== Gate-2 searches (inner folds scored per candidate; 20 = 5 outer x 4 inner)"
+found=0
+for results in runs/gate2/*/results.csv; do
+    [ -f "$results" ] || continue
+    found=1
+    folder=$(dirname "$results")
+    python - "$results" "$folder" <<'EOF'
+import json, os, sys
+import pandas as pd
+table = pd.read_csv(sys.argv[1])
+counts = table.groupby("candidate")["split"].nunique().to_dict()
+line = ", ".join(f"{c} {n}" for c, n in sorted(counts.items()))
+decision = os.path.join(sys.argv[2], "decision.json")
+verdict = json.load(open(decision))["model"] if os.path.isfile(decision) else "-"
+print(f"  {os.path.basename(sys.argv[2])}: {line}; model {verdict}")
+EOF
+done
+[ "$found" -eq 1 ] || echo "  none yet"
+
+echo
+echo "== RUL runs (results of 15 = 5 outer folds x 3 seeds)"
+found=0
+for folder in runs/rul/*/; do
+    [ -d "$folder" ] || continue
+    found=1
+    n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
+    echo "  $(basename "$folder"): $n of 15"
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 

@@ -58,23 +58,25 @@ pre-commit install                        # same lint and format checks before e
 
 GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 3.12, then an advisory type check. A weekly workflow checks that the data sources still serve the files we used. See [`docs/CI.md`](docs/CI.md).
 
-## Pipeline (stages 1-4 of the plan)
+## Pipeline (stages 1-5 of the plan)
 
 ```powershell
-python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda      # 1: window stores (model input, labels, contexts)
-python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda --encoder mantis --arms T F E
-python -m pdmfm.features images --views 4                       # 2: DINOv2 photo tokens (+ augmented copies)
+python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda matwi   # 1: window stores (model input, labels, contexts)
+python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi --encoder mantis --arms T F E
+python -m pdmfm.features images --dataset nonastreda matwi --views 4   # 2: DINOv2 photo tokens (MATWI: insert crops)
 python -m pdmfm.features texts                                   #    Qwen3 contexts and class prototypes
 python -m pdmfm.patchtst --fold 1 --device cuda                  #    own PatchTST, per outer fold (Ruche)
 python -m pdmfm.probe --run-id gate1 --candidates mantis:T mantis:T+E moment:T ...   # 3: Gate 1
 python -m pdmfm.tune --dataset nonastreda --encoder mantis --arms F --run-id tune-nona --grid lr=3e-4,1e-3 d=128,256
 python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona     # 4: Plan B
+python -m pdmfm.gate2 --dataset nonastreda --encoder mantis --arms F --run-id gate2-nona     # 5: Gate 2
+python -m pdmfm.rul --encoder mantis --arms F E --run-id rul-xjtu --compare runs/planb/<run>  #    RUL from past snapshots
 python -m pdmfm.features status                                  # what is cached
 ```
 
 - **Stage 1.** A window store per dataset holds the band-limited model input of every channel,
   level descriptors, slow-channel summaries, the measured shaft speed, labels and the context
-  sentence. Nonastreda windows also get the previous pass's photos.
+  sentence. Milling windows (Nonastreda, MATWI) also get the previous pass's or cut's photos.
 - **Stage 2.** Feature caches are keyed by the store, the encoder checkpoint and the arm, so
   they are never mixed, and they resume after an interruption.
 - **Splits.** All splits are by physical unit (`pdmfm.protocols`).
@@ -87,8 +89,14 @@ python -m pdmfm.features status                                  # what is cache
   outer folds × 3 seeds, with per-modality, missing-modality, stale-photo and baseline
   results, the fit on the training units, and pooled out-of-fold estimates with 95 %
   intervals from resampling test units (`runs/planb/<run-id>/summary.md`).
-  `pdmfm.tune` chooses hyperparameters on the inner-validation units only.
-- **Ruche.** MOMENT, AST and PatchTST at full scale run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
+  `pdmfm.tune` chooses hyperparameters on the inner-validation units only. Every table also
+  has a schedule baseline (the class and target at the same pass, cut or snapshot number) and,
+  for the wear classes, ordinal metrics.
+- **Stage 5 (Gate 2).** Four fusion candidates (concat, Perceiver, MBT, C2F) on Plan B's
+  experts, ranked against Plan B by inner cross-validation, with validation rotated over the
+  training units (`pdmfm.gate2`). RUL gets a causal model over each bearing's past snapshots
+  (`pdmfm.rul`).
+- **Ruche.** MOMENT, AST and PatchTST at full scale, and the full Gate 2, run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
 
 ## Heavy jobs and Ruche
 
@@ -125,10 +133,12 @@ pdmfm/            package
   probe.py        stage 3: Gate 1
   losses.py       evidential rules and losses: Dempster's rule (TMC), Dirichlet loss, NIG loss, MoNIG
   metrics.py      accuracy, macro-F1, ECE, Brier, NLL, temperature scaling, interval coverage, PHM 2012 score
-  model/          per-modality token sets from the caches (inputs.py), encoders and heads (layers.py), Plan B (late.py)
+  model/          per-modality token sets from the caches (inputs.py), encoders and heads (layers.py), Plan B (late.py), Gate-2 candidates (fusion.py)
   train.py        supervised training on cached features: losses, checkpoint selection, bag aggregation
   planb.py        stage 4: Plan B over outer folds and seeds; summary tables
   tune.py         hyperparameter search on inner-validation units
+  gate2.py        stage 5: fusion search by inner cross-validation, and the Gate-2 rule
+  rul.py          RUL from a causal history of snapshots (XJTU-SY)
   stats.py        pooled out-of-fold statistics: macro-F1, RMSE, unit bootstrap intervals
 tests/            pytest suite (synthetic data; real-data, checkpoint, acceptance and network tests are marked)
 scripts/eda/      exploratory data analysis

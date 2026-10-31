@@ -8,6 +8,8 @@ target bearings in a source fold) belong to no part.
   T(2k+1) for inner validation; XJTU-SY bearings Bearing{1,2,3}_k with those of fold k+1 for
   validation; Paderborn's 15 source bearings in 5 stratified triples.
 * Gate 1 uses the inner-validation parts only; CWRU's validation is its 3 hp recordings.
+* :func:`inner_folds` (Gate 2): within outer fold k, validation rotates over the other four
+  folds' test groups, so every non-test unit is validated once per outer fold.
 * Held-out targets: KAIST (support from 0 and 2 Nm, test at 4 Nm), Paderborn real damage
   (one bearing per class as support, redrawn per draw), PHM 2010 (one labelled cutter as test).
 * :func:`pretraining_mask`: what self-supervised pretraining of fold k may see; no target
@@ -41,6 +43,11 @@ PADERBORN_SOURCE_FOLDS = (
     ("KA07", "KA09", "KI08"),
 )
 PADERBORN_TARGET_HEALTHY = PADERBORN_HEALTHY[3:]  # K004-K006
+# MATWI's 17 tools in 5 groups, dealt round-robin over C45 (Sets 1-11) then 304 stainless
+# (Sets 12-17), so every group mixes both materials.
+MATWI_GROUPS = tuple(
+    tuple(f"Set{n:02d}" for n in range(1, 18) if (n - 1) % 5 == g) for g in range(5)
+)
 PADERBORN_OUT_OF_SPACE = ("KB27",)  # combined outer + inner damage: not in the 3-class space
 
 
@@ -126,6 +133,13 @@ def xjtu_fold(manifest: pd.DataFrame, k: int) -> Split:
     return unit_split(manifest, f"xjtu_sy-fold{k}", test, val)
 
 
+def matwi_fold(manifest: pd.DataFrame, k: int) -> Split:
+    """Outer fold k: MATWI group k for test (3-4 tools), group k+1 for inner validation."""
+    _check_fold(k)
+    test, val = MATWI_GROUPS[k - 1], MATWI_GROUPS[k % N_FOLDS]
+    return unit_split(manifest, f"matwi-fold{k}", test, val)
+
+
 def paderborn_fold(manifest: pd.DataFrame, k: int) -> Split:
     """Outer fold k over the 15 source bearings; target bearings belong to no part."""
     _check_fold(k)
@@ -145,9 +159,28 @@ def cwru_gate1(manifest: pd.DataFrame) -> Split:
 
 SOURCE_FOLDS = {
     "nonastreda": nonastreda_fold,
+    "matwi": matwi_fold,
     "xjtu_sy": xjtu_fold,
     "paderborn": paderborn_fold,
 }
+
+
+def inner_folds(dataset: str, manifest: pd.DataFrame, k: int) -> list[Split]:
+    """The inner folds of outer fold k: validation on outer fold j's test group (j != k),
+    training on the rest of fold k's training and validation units; fold k's test units
+    belong to no part. Every non-test unit is validated exactly once."""
+    if dataset not in SOURCE_FOLDS:
+        raise ValueError(f"no outer folds for {dataset!r}")
+    outer = SOURCE_FOLDS[dataset](manifest, k)
+    pool = outer.train | outer.val
+    none = np.zeros(len(manifest), dtype=bool)
+    splits = []
+    for j in range(1, N_FOLDS + 1):
+        if j == k:
+            continue
+        group = SOURCE_FOLDS[dataset](manifest, j).test & pool
+        splits.append(Split(f"{outer.name}-inner{j}", pool & ~group, group, none))
+    return splits
 
 
 def pretraining_mask(dataset: str, manifest: pd.DataFrame, fold: int | None) -> np.ndarray:

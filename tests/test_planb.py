@@ -262,17 +262,26 @@ def test_result_contents(root):
 def test_without_photo_equals_the_force_opinion(root):
     out = run(root, "nonastreda", ("T", "F"), "without")
     result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))
-    assert result["test"]["without_photo"] == result["test"]["only_force"]
+    flat_without, flat_force = {}, {}
+    planb._flatten("", result["test"]["without_photo"], flat_without)
+    planb._flatten("", result["test"]["only_force"], flat_force)
+    assert flat_without == pytest.approx(flat_force)  # a vacuous photo opinion: equal
 
 
-def test_recombining_every_modality_reproduces_the_model(nona):
+def test_late_fusion_without_a_modality_combines_the_other_experts(nona):
+    """The missing-modality test marks the modality absent at prediction time; for late
+    fusion that is exactly Dempster's rule and MoNIG over the remaining experts."""
+    from pdmfm import losses
+
     torch.manual_seed(0)
     model = LateEvidential(nona, d=32)
     rows = np.arange(len(nona.manifest))
     pred = predict(model, nona, rows, SMALL)
-    again = planb._recombine(pred, [0, 1])
-    np.testing.assert_allclose(again["combined"], pred["combined"], rtol=1e-5)
-    np.testing.assert_allclose(again["fused_nig"], pred["fused_nig"], rtol=1e-5)
+    dropped = planb.without_each(model, nona, rows, SMALL)
+    assert set(dropped) == {"force", "photo"}
+    combined = losses.ds_combine_all(torch.from_numpy(pred["evidence"][:, [0]]))[0].numpy()
+    np.testing.assert_allclose(dropped["photo"]["combined"], combined, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(dropped["photo"]["fused_nig"], pred["nig"][:, 0], rtol=1e-5)
 
 
 def test_persistence_baselines_on_the_known_sequence(nona):
@@ -293,6 +302,45 @@ def test_persistence_baselines_on_the_known_sequence(nona):
     )
 
 
+def test_schedule_baseline_knows_only_the_position_in_each_tools_life(nona):
+    """Every synthetic tool follows the same schedule (sharp, sharp, used, used, dulled,
+    dulled; 40 to 100 um), so the training tools' class and mean wear at each pass number
+    predict the test tools exactly: the schedule shortcut a model must beat."""
+    split = protocols.nonastreda_fold(nona.manifest, 1)
+    train, test = np.flatnonzero(split.train), np.flatnonzero(split.test)
+    table = planb.baseline_table(nona, train, test)
+    np.testing.assert_array_equal(table["schedule"], [0, 0, 1, 1, 2, 2] * 2)
+    np.testing.assert_allclose(table["schedule_reg"], table["y_reg"], atol=1e-4)
+    result = planb.baselines(nona, train, test)
+    assert result["schedule"]["accuracy"] == 1.0 and result["schedule"]["mace"] == 0.0
+    assert result["schedule_regression"]["rmse"] == pytest.approx(0, abs=1e-4)
+
+
+def test_schedule_baseline_falls_back_beyond_the_training_lives():
+    position = np.array([0, 1, 2, 0, 1])
+    values = np.array([1, 1, 2, 0, 1])
+    out = planb._schedule(position, values, np.array([0, 1, 2, 3]), -1, lambda v: int(v.max()))
+    np.testing.assert_array_equal(out, [1, 1, 2, -1])
+
+
+def test_ordered_classes_get_ordinal_metrics_and_decisions(root):
+    out = run(root, "nonastreda", ("T", "F"), "ordinal")
+    result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))
+    bag = result["test"]["combined"]["bag"]
+    assert {"mace", "ordinal", "recall"} <= set(bag)
+    assert {"accuracy", "macro_f1", "mace", "recall"} <= set(bag["ordinal"])
+    bags = pd.read_csv(out / "fold1-seed0-bags.csv")
+    assert {"pred_class_ordinal", "schedule", "schedule_reg"} <= set(bags)
+    pooled = set(pd.read_csv(out / "pooled.csv")["quantity"])
+    assert {
+        "macro-F1, model, ordinal median", "macro-F1, schedule", "macro-F1, model - schedule",
+        "accuracy where the class changes, model", "RMSE, schedule",
+    } <= pooled  # fmt: skip
+    assert "macro-F1, model - model, ordinal median" not in pooled
+    xjtu = run(root, "xjtu_sy", ("F",), "unordered")
+    assert "ordinal" not in json.dumps(json.loads((xjtu / "fold1-seed0.json").read_text()))
+
+
 def test_xjtu_rul_run(root):
     out = run(root, "xjtu_sy", ("F", "E"), "xjtu")
     result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))
@@ -300,7 +348,10 @@ def test_xjtu_rul_run(root):
     assert {"rmse", "mae", "coverage_90", "width_90", "phm2012"} <= set(combined)
     assert "combined" not in result["test"] and result["temperature"] is None
     assert result["interval_scale"] > 0 and "combined_calibrated" in result["test"]["regression"]
-    assert set(result["baselines"]) == {"train_mean"}  # no RUL persistence
+    # No RUL persistence; the schedule baseline is the training bearings' mean RUL at the
+    # same snapshot number, exact here because every synthetic bearing lives 30 minutes.
+    assert set(result["baselines"]) == {"train_mean", "schedule_regression"}
+    assert result["baselines"]["schedule_regression"]["rmse"] == pytest.approx(0, abs=1e-6)
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "## Regression" in summary and "baseline: train_mean" in summary
     assert "interval scale" in summary and "| combined_calibrated |" in summary

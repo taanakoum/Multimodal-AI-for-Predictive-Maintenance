@@ -211,6 +211,37 @@ def test_phm2010_acceptance_columns_and_spindle_speed():
     )
 
 
+@pytest.mark.slow
+@pytest.mark.data("matwi", extracted=True)
+def test_matwi_inventory_and_labels():
+    """PROJECT_LOG.md, week 6: 17 tools, 1,700 cuts; labels by photo timestamps (1,567 cuts
+    have a photo before the next cut); Set 17 has two inserts."""
+    infos = get_reader("matwi").index()
+    assert len(infos) == 1700 and len({i.unit for i in infos}) == 17
+    assert Counter(i.label for i in infos) == {"sharp": 540, "used": 486, "dulled": 541, None: 133}
+    wear = np.array([i.meta["wear_um"] for i in infos], dtype=float)
+    assert np.nanmin(wear) == 15 and np.nanmax(wear) == 750
+    inserts = {i.unit: i.condition["inserts"] for i in infos}
+    assert inserts["Set17"] == 2 and sum(v == 1 for v in inserts.values()) == 16
+    materials = Counter(i.condition["material"] for i in {i.unit: i for i in infos}.values())
+    assert materials == {"C45 steel": 11, "304 stainless steel": 6}
+
+
+@pytest.mark.data("matwi", extracted=True)
+def test_matwi_crops_are_the_insert_boxes():
+    from PIL import Image
+
+    from pdmfm.datasets.matwi import MATWI
+
+    crops = sorted(MATWI().crops.glob("*/*.jpg"))
+    if not crops:
+        pytest.skip("no MATWI crops (python -m pdmfm.features images --dataset matwi)")
+    assert len(crops) == 1680
+    for path in crops[::100]:
+        with Image.open(path) as image:
+            assert image.size == (600, 400)
+
+
 # ----------------------------------------------------------------------------- window stores
 # Built from the real downloads with `python -m pdmfm.windows build ...`; skipped otherwise.
 
@@ -225,7 +256,7 @@ def _store(dataset):
 
 
 def test_window_counts_match_the_eda():
-    expected = {"cwru": 356, "kaist": 4378, "xjtu_sy": 9216, "nonastreda": 4241}
+    expected = {"cwru": 356, "kaist": 4378, "xjtu_sy": 9216, "nonastreda": 4241, "matwi": 11043}
     for dataset, count in expected.items():
         store = _store(dataset)
         assert len(store) == count, dataset
@@ -263,3 +294,19 @@ def test_nonastreda_windows_see_only_previous_pass_photos():
     # Every window of a later pass has the previous pass's photos, its first window included
     # (the photo pause between passes; pdmfm.datasets.nonastreda.PASS_GAP_S).
     assert (manifest.loc[~first, "image_tool"] != "").all()
+
+
+def test_matwi_windows_see_only_previous_cut_photos():
+    from pathlib import PurePosixPath
+
+    manifest = _store("matwi").manifest
+    has_photo = manifest["image_insert"] != ""
+    assert has_photo.mean() > 0.95
+    assert (manifest.loc[has_photo, "age_insert"] > 0).all()  # captured before the window
+    start = manifest.groupby("unit")["meta_t_start"].transform("min")
+    first = manifest["meta_t_start"] == start
+    assert (manifest.loc[first, "image_insert"] == "").all()  # a tool's first cut has none
+    # The photo is the one taken after the previous cut: earlier than this cut's start and
+    # never stamped after it (photo files are named by their capture time, cuts by theirs).
+    stems = manifest["image_insert"].map(lambda p: PurePosixPath(p).stem if p else "")
+    assert not (stems == manifest["recording_id"]).any()

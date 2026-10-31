@@ -28,6 +28,16 @@ from pdmfm.model.layers import (
 )
 
 
+def class_head(head: str, d: int, prototypes: torch.Tensor) -> nn.Module:
+    """An evidential class head: Qwen prototypes, prototypes through a low-rank learned W_t
+    (``projected``), or a free linear layer (``linear``, no text anchoring)."""
+    if head == "linear":
+        return LinearEvidentialHead(d, len(prototypes))
+    if head in ("prototype", "projected"):
+        return PrototypeEvidentialHead(d, prototypes, 16 if head == "projected" else 0)
+    raise ValueError(f"head must be prototype, projected or linear, not {head!r}")
+
+
 def _standardizer(values: np.ndarray, rows, mask: np.ndarray | None = None):
     """(mean, std) over ``rows`` of (N, ...) values, per remaining position; masked entries
     are ignored. Identity when ``rows`` is None; a constant feature keeps std 1."""
@@ -89,13 +99,7 @@ class LateEvidential(nn.Module):
                 stats = _standardizer(modality.tokens, train_rows, modality.token_present)
                 self._buffers_from(f"tokens_{name}", stats)
             if prototypes is not None:
-                if head == "linear":
-                    self.class_heads[name] = LinearEvidentialHead(d, len(prototypes))
-                elif head in ("prototype", "projected"):
-                    rank = 16 if head == "projected" else 0
-                    self.class_heads[name] = PrototypeEvidentialHead(d, prototypes, rank)
-                else:
-                    raise ValueError(f"head must be prototype, projected or linear, not {head!r}")
+                self.class_heads[name] = class_head(head, d, prototypes)
             if inputs.y_reg is not None:
                 self.reg_heads[name] = NIGHead(d)
 

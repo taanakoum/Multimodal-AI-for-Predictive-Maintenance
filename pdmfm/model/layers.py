@@ -51,7 +51,7 @@ class ModalityEncoder(nn.Module):
         self.norm = nn.LayerNorm(d)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(
+    def embed(
         self,
         tokens: torch.Tensor,  # (B, T, d_in)
         roles: torch.Tensor,  # (T,)
@@ -59,29 +59,38 @@ class ModalityEncoder(nn.Module):
         token_present: torch.Tensor | None = None,  # (B, T) bool
         levels: torch.Tensor | None = None,  # (B, L, level_dim)
         level_channels: torch.Tensor | None = None,  # (L,)
-        age: torch.Tensor | None = None,  # (B, T) seconds
+        age: torch.Tensor | None = None,  # (B, T) passes since capture
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """(summary z (B, d), attention weights over the tokens (B, T [+ L]))."""
+        """(token embeddings (B, T [+ L], d), token present (B, T [+ L]) bool)."""
         x = self.adapter(tokens) + self.role(roles) + self.channel(channels)
         if self.age is not None and age is not None:
             x = x + self.age(torch.log1p(age.clamp_min(0)).unsqueeze(-1))
-        present = token_present
+        present = (
+            token_present
+            if token_present is not None
+            else torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
+        )
         if self.level is not None and levels is not None and level_channels is not None:
             level_role = torch.full_like(level_channels, ROLE["level"])
             lv = self.level(levels) + self.role(level_role) + self.channel(level_channels)
             x = torch.cat([x, lv], 1)
-            if present is not None:
-                present = torch.cat([present, present.new_ones(lv.shape[:2])], 1)
-        padding = None
-        if present is not None:
-            padding = ~present
-            # A row with no token at all would make attention undefined; let it attend
-            # everywhere. Its modality is absent, so its output is masked downstream.
-            padding = padding & ~padding.all(1, keepdim=True)
+            present = torch.cat([present, present.new_ones(lv.shape[:2])], 1)
+        return x, present
+
+    def pool(self, x: torch.Tensor, present: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """(summary z (B, d), attention weights over the tokens (B, T))."""
+        # A row with no token at all would make attention undefined; let it attend
+        # everywhere. Its modality is absent, so its output is masked downstream.
+        padding = ~present
+        padding = padding & ~padding.all(1, keepdim=True)
         pooled, weights = self.attention(
             self.query.expand(x.shape[0], -1, -1), x, x, key_padding_mask=padding
         )
         return self.norm(self.dropout(pooled.squeeze(1))), weights.squeeze(1)
+
+    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
+        """(summary z (B, d), attention weights over the tokens (B, T [+ L]))."""
+        return self.pool(*self.embed(*args, **kwargs))
 
 
 class PrototypeEvidentialHead(nn.Module):

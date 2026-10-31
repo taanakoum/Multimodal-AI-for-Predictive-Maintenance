@@ -184,6 +184,49 @@ def paderborn_reader(seconds: float = 2.1, seed: int = 0) -> FakeReader:
     return FakeReader(recordings)
 
 
+def matwi_reader(photo_root=None, cuts: int = 4, seed: int = 0) -> FakeReader:
+    """17 single-insert tools x ``cuts`` cuts of 8.5 s at 1 kHz (force, vibration, sound),
+    each followed by an insert photo; the Fx level and the vibration grow with the wear."""
+    rng = np.random.default_rng(seed)
+    rate, seconds, gap = 1000.0, 8.5, 30.0
+    n = int(seconds * rate)
+    recordings = []
+    for number in range(1, 18):
+        unit, clock = f"Set{number:02d}", 0.0
+        for c in range(cuts):
+            wear = 40.0 + 30.0 * c + rng.normal(0, 3)
+            label = ("sharp", "used", "dulled")[int(np.searchsorted((71.0, 110.0), wear, "right"))]
+            channels = {
+                name: ChannelData(
+                    name, family, axis, placement, rate,
+                    (offset + scale * wear / 40 * rng.standard_normal(n)).astype(np.float32),
+                    "N" if family == "force" else "",
+                )
+                for name, family, axis, placement, offset, scale in (
+                    ("fx", "force", "x", "table", 100.0 + wear, 5.0),
+                    ("fy", "force", "y", "table", 50.0, 5.0),
+                    ("fz", "force", "z", "table", 10.0, 2.0),
+                    ("acc", "vibration", "none", "spindle", 0.0, 1.0),
+                    ("mic", "acoustic", "none", "machine", 0.0, 0.5),
+                )
+            }  # fmt: skip
+            record_id = f"{unit}_cut{c}"
+            images = ()
+            if photo_root is not None:
+                images = (
+                    ImageItem("insert", str(photo_root / f"{record_id}.jpg"), clock + seconds + 5),
+                )
+            info = RecordingInfo(
+                "matwi", record_id, unit, label, None,
+                {"material": "C45 steel" if number <= 11 else "304 stainless steel",
+                 "inserts": 1, "speed_text": "2547 rpm"},
+                {"t_start": clock, "wear_um": wear, "set": number},
+            )  # fmt: skip
+            recordings.append(Recording(info, channels, images, clock, {"wear_um": wear}))
+            clock += seconds + gap
+    return FakeReader(recordings)
+
+
 # ----------------------------------------------------------------------------- caches
 
 
@@ -225,7 +268,7 @@ def _vector(text: str, shape: tuple[int, ...]) -> np.ndarray:
     return np.random.default_rng(seed).standard_normal(shape)
 
 
-def build_planb_root(root, datasets=("nonastreda", "xjtu_sy", "cwru", "paderborn")):
+def build_planb_root(root, datasets=("nonastreda", "xjtu_sy", "cwru", "paderborn", "matwi")):
     """Window stores, stats features (arms T, F and, for bearings, E), photo caches and text
     prototypes under ``root`` laid out as a data root (``interim/windows``,
     ``interim/features``). Call with ``PDMFM_DATA_ROOT`` set to ``root``."""
@@ -240,6 +283,7 @@ def build_planb_root(root, datasets=("nonastreda", "xjtu_sy", "cwru", "paderborn
         "xjtu_sy": lambda: xjtu_reader(30),
         "cwru": cwru_reader,
         "paderborn": paderborn_reader,
+        "matwi": lambda: matwi_reader(photo_root=root / "raw" / "matwi"),
     }
     cache = features.FeatureStore(root / "interim" / "features")
     for name in datasets:

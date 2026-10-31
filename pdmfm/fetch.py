@@ -95,6 +95,30 @@ def _mendeley_files(session: requests.Session, dataset_id: str, version: int) ->
     return remote
 
 
+def _dataverse_files(session: requests.Session, server: str, doi: str) -> list[RemoteFile]:
+    """Files of the latest version of a Dataverse dataset, with sizes and MD5 checksums."""
+    response = session.get(
+        f"{server}/api/datasets/:persistentId/",
+        params={"persistentId": f"doi:{doi}"},
+        timeout=60,
+    )
+    response.raise_for_status()
+    remote = []
+    for entry in response.json()["data"]["latestVersion"]["files"]:
+        data = entry["dataFile"]
+        checksum = data.get("checksum") or {}
+        folder = entry.get("directoryLabel")
+        remote.append(
+            RemoteFile(
+                url=f"{server}/api/access/datafile/{data['id']}",
+                relpath=f"{folder}/{data['filename']}" if folder else data["filename"],
+                size=data.get("filesize"),
+                md5=checksum.get("value") if checksum.get("type") == "MD5" else data.get("md5"),
+            )
+        )
+    return remote
+
+
 def _huggingface_files(
     session: requests.Session, repo: str, wanted: Iterable[str]
 ) -> list[RemoteFile]:
@@ -125,6 +149,8 @@ def list_remote_files(
     session = session or make_session()
     if source.kind == "mendeley":
         return _mendeley_files(session, source.params["dataset_id"], source.params["version"])
+    if source.kind == "dataverse":
+        return _dataverse_files(session, source.params["server"], source.params["doi"])
     if source.kind == "huggingface":
         wanted = list(source.params["files"])
         if include_large:
@@ -147,6 +173,13 @@ def _verify(path: Path, remote: RemoteFile) -> str:
     digest = sha256_of(path)
     if remote.sha256 is not None and digest != remote.sha256.lower():
         raise DownloadError(f"{remote.relpath}: SHA-256 {digest} != expected {remote.sha256}")
+    if remote.md5 is not None:
+        md5 = hashlib.md5(usedforsecurity=False)
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(CHUNK), b""):
+                md5.update(block)
+        if md5.hexdigest() != remote.md5.lower():
+            raise DownloadError(f"{remote.relpath}: MD5 {md5.hexdigest()} != expected {remote.md5}")
     return digest
 
 
@@ -290,6 +323,7 @@ def fetch_dataset(
             "size": (target / remote.relpath).stat().st_size,
             "sha256": digest,
             "publisher_sha256": remote.sha256,
+            "publisher_md5": remote.md5,
             "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
         }
         with lock:

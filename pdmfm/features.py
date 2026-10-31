@@ -237,6 +237,13 @@ def image_paths(dataset: str) -> dict[str, list[str]]:
 
         infos = get_reader("najafi_thermal").index()
         return {"thermal": [Path(i.meta["path"]).relative_to(root).as_posix() for i in infos]}
+    if dataset == "matwi":
+        from pdmfm.datasets.matwi import MATWI
+
+        reader = MATWI()
+        reader.prepare_crops()
+        crops = sorted(reader.crops.rglob("*.jpg"))
+        return {"insert": [p.relative_to(root).as_posix() for p in crops]}
     raise ValueError(f"{dataset} has no photos")
 
 

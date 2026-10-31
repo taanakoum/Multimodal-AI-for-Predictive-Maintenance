@@ -45,6 +45,25 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 > - (2026-10-30) The KIT CNC set named under "Facts" holds no tool pictures and no wear
 >   labels (checked on its record). The paired image-sensor milling set is MATWI
 >   (KU Leuven; 17 tools; decision E).
+> - (2026-10-31) MATWI joins the source datasets (decision E): 17 tools in 5 outer folds dealt
+>   round-robin over both materials, wear classes by Nonastreda's thresholds (71 / 110 µm) with
+>   Nonastreda's class descriptions (the same text prototypes), labels and photos joined by
+>   their timestamps, insert photos cropped
+>   to each set's box. Nonastreda keeps the publisher's visual labels, which disagree with
+>   those thresholds on 18 of 378 passes (mostly T6).
+> - (2026-10-31) Gate 2 is decided by inner cross-validation: within each outer fold the
+>   validation group rotates over the other four folds' test groups (20 validation scores per
+>   candidate). Plan B with its own recipe and late fusion with the search recipe are both
+>   references; the rule (fixed before any run) is a mean gain of at least 0.01 and wins on at
+>   least 60 % of the paired folds (`pdmfm.gate2`). Fusion candidates read every expert's
+>   tokens; the concat candidate takes each expert's attention-pooled vector.
+> - (2026-10-31) RUL gets a causal sequence model over each bearing's past snapshots
+>   (`pdmfm.rul`), with history = 1 as the single-snapshot control.
+> - (2026-10-31) From the OmniFuser results: every table adds a schedule baseline (the
+>   training units' class and target at the same pass, cut or snapshot number; OmniFuser's
+>   run number alone beat its model), ordinal metrics and the ordinal-median decision for the
+>   wear classes (reported next to argmax, never instead), and accuracy on the bags where the
+>   class changes.
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or

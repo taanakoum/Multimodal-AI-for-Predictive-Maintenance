@@ -25,6 +25,7 @@ CONDITIONS = {
     "phm2010": {"rpm": 10400.0},
     "nonastreda": {},
     "najafi_thermal": {},
+    "matwi": {"material": "C45 steel", "inserts": 1, "speed_text": "2547 rpm"},
 }
 
 
@@ -93,3 +94,13 @@ def test_unknown_dataset():
 
 def test_regression_datasets_have_no_classes():
     assert texts.load("xjtu_sy").classes == () and texts.load("phm2010").label_space is None
+
+
+def test_matwi_shares_the_milling_wear_classes():
+    """MATWI uses Nonastreda's classes and descriptions, so both milling sets share one
+    text-anchored label space (their prototypes are identical)."""
+    from pdmfm.datasets.matwi import CLASS_NAMES as MATWI_CLASSES
+
+    matwi, nonastreda = texts.load("matwi"), texts.load("nonastreda")
+    assert set(MATWI_CLASSES) == set(matwi.descriptions)
+    assert matwi.descriptions == nonastreda.descriptions

@@ -24,7 +24,9 @@ RATE_HZ = 1000.0
 # Nominal pause between passes (not recorded in the data). Its length only sets the photo
 # ages; what matters is that the photos fall strictly between two passes.
 PASS_GAP_S = 60.0
-CLASS_NAMES = ("sharp", "used", "dulled")  # flank wear < 71 µm, < 110 µm, >= 110 µm
+# The publisher's image labels (annotators' visual judgement). 360 of the 378 passes agree
+# with flank wear < 71 µm, < 110 µm, >= 110 µm; 18 do not, mostly T6 (PROJECT_LOG.md, week 6).
+CLASS_NAMES = ("sharp", "used", "dulled")
 PHOTO_FOLDERS = {"tool": ("tool", ".jpg"), "chip": ("chip", ".jpg"), "workpiece": ("work", ".png")}
 FORCE_AXES = (("fx", "x"), ("fy", "y"), ("fz", "z"))
 

@@ -12,7 +12,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 FAMILIES = ("vibration", "force", "current", "acoustic", "ae", "slow")
-IMAGE_KINDS = ("tool", "chip", "workpiece", "thermal")
+IMAGE_KINDS = ("tool", "chip", "workpiece", "thermal", "insert")
 
 
 @dataclass(frozen=True)

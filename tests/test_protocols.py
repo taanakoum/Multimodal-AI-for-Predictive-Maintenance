@@ -175,3 +175,24 @@ def test_fold_numbers_are_checked(nonastreda):
         protocols.nonastreda_fold(nonastreda, 6)
     with pytest.raises(ValueError):
         protocols.pretraining_mask("najafi_thermal", manifest(["m"]), 1)
+
+
+@pytest.fixture
+def matwi():
+    tools = [t for group in protocols.MATWI_GROUPS for t in group]
+    return manifest(tools, class_key={t: "sharp" for t in tools})
+
+
+@pytest.mark.parametrize("k", range(1, 6))
+def test_matwi_folds_mix_both_materials(matwi, k):
+    split = protocols.matwi_fold(matwi, k)
+    split.assert_unit_disjoint(matwi)
+    test = split.units(matwi, "test")
+    assert 3 <= len(test) <= 4 and len(split.units(matwi, "val")) >= 3
+    numbers = {int(t.removeprefix("Set")) for t in test}
+    assert any(n <= 11 for n in numbers) and any(n >= 12 for n in numbers)  # C45 and 304
+
+
+def test_every_matwi_tool_is_tested_once(matwi):
+    tested = [t for k in range(1, 6) for t in protocols.matwi_fold(matwi, k).units(matwi, "test")]
+    assert sorted(tested) == sorted(f"Set{n:02d}" for n in range(1, 18))

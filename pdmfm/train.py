@@ -8,6 +8,9 @@
   inner-validation score: the mean of bag-level macro-F1 and 1 - RMSE / std of the target.
 * Bag aggregation (plan): a pass, cut or recording gets the mean evidence (classes) and the
   mean NIG parameters (regression) of its windows.
+* Gate 2 (``fusion``): the model is a fusion candidate (:mod:`pdmfm.model.fusion`), trained
+  as the plan sets for the fusion search: whole modalities dropped from the inputs with
+  probability ``input_dropout`` (0.3), AdamW 3e-4 with a cosine ``schedule``.
 * Options, all off by default and kept only where the inner-validation units showed a gain
   (PROJECT_LOG.md, week 5): modality dropout on the combined losses (``modality_dropout``),
   photos of the 2nd and 3rd previous passes (``photo_lags``) and augmented photo copies
@@ -27,6 +30,7 @@ import torch
 
 from pdmfm import losses
 from pdmfm import metrics as M
+from pdmfm.model.fusion import build_model
 from pdmfm.model.inputs import TaskInputs
 from pdmfm.model.late import LateEvidential
 
@@ -45,6 +49,9 @@ class TrainConfig:
     photo_lags: int = 1  # train on photos of up to this many passes back
     photo_views: bool = False  # train on augmented photo copies as well
     head: str = "prototype"  # "projected" (learned W_t) or "linear" (no text; diagnostic)
+    fusion: str = "late"  # Gate-2 candidate: late (Plan B), concat, perceiver, mbt, c2f
+    input_dropout: float = 0.0  # drop whole modalities from the inputs (fusion search: 0.3)
+    schedule: str = "constant"  # or "cosine" (the fusion search)
     device: str = "cpu"
 
     def as_dict(self) -> dict:
@@ -99,7 +106,21 @@ def batch(
         if age is not None:
             part["age"] = torch.from_numpy(age).to(device)
         out[name] = part
+    if augment is not None and augment[0].input_dropout > 0 and len(out) > 1:
+        _drop_modalities(out, augment[0].input_dropout, augment[1])
     return out
+
+
+def _drop_modalities(parts: dict, p: float, rng: np.random.Generator) -> None:
+    """Mark each present modality absent with probability ``p``, never all of a row's."""
+    names = list(parts)
+    present = np.stack([parts[n]["present"].cpu().numpy() for n in names], 1)
+    keep = present & (rng.random(present.shape) >= p)
+    for i in np.flatnonzero(present.any(1) & ~keep.any(1)):
+        keep[i, rng.choice(np.flatnonzero(present[i]))] = True
+    for j, name in enumerate(names):
+        device = parts[name]["present"].device
+        parts[name]["present"] = torch.from_numpy(keep[:, j]).to(device)
 
 
 @dataclass
@@ -151,6 +172,11 @@ def _losses(
                     total = total + per_row.mean()
             assert combined is not None  # present whenever the model gives evidence
             total = total + losses.tmc_loss(combined[labelled], yl, annealing).mean()
+            if "fused_evidence" in out:  # a fusion candidate's own opinion
+                anything = present[labelled].any(1)
+                if anything.any():
+                    own = out["fused_evidence"][labelled][anything]
+                    total = total + losses.tmc_loss(own, yl[anything], annealing).mean()
     if "nig" in out and inputs.y_reg is not None:
         y = torch.from_numpy(((inputs.y_reg[rows] - y_mean) / y_std).astype(np.float32)).to(device)
         labelled = torch.isfinite(y)
@@ -163,6 +189,9 @@ def _losses(
                     total = total + losses.nig_loss(nig, yl[here], cfg.nig_regularizer).mean()
             assert fused is not None  # present whenever the model gives NIG outputs
             total = total + losses.nig_loss(fused[labelled], yl, cfg.nig_regularizer).mean()
+            if "fused_own_nig" in out:
+                own = out["fused_own_nig"][labelled]
+                total = total + losses.nig_loss(own, yl, cfg.nig_regularizer).mean()
     return total
 
 
@@ -175,14 +204,18 @@ def predict(
     drop: tuple[str, ...] = (),
     photo_lag: int = 1,
 ) -> dict:
-    """Numpy outputs for ``rows``: evidence, combined, conflict, nig, fused_nig, present.
-    ``photo_lag`` > 1 gives the photos of an older pass (the staleness test)."""
+    """Numpy outputs for ``rows``: evidence, combined, conflict, nig, fused_nig, present, and
+    a fusion candidate's own fused_evidence and fused_own_nig. ``photo_lag`` > 1 gives the
+    photos of an older pass (the staleness test)."""
     model.eval()
     device = torch.device(cfg.device)
     collected: dict[str, list] = {}
     for start in range(0, len(rows), 1024):
         out = model(batch(inputs, rows[start : start + 1024], device, drop, photo_lag))
-        for key in ("evidence", "combined", "conflict", "nig", "fused_nig", "present"):
+        for key in (
+            "evidence", "combined", "conflict", "nig", "fused_nig", "present",
+            "fused_evidence", "fused_own_nig",
+        ):  # fmt: skip
             if key in out:
                 collected.setdefault(key, []).append(out[key].cpu().numpy())
     return {k: np.concatenate(v) for k, v in collected.items()}
@@ -223,6 +256,17 @@ def selection_score(
     return float(np.mean(parts)) if parts else float("nan")
 
 
+def make_scheduler(optimizer, cfg: TrainConfig, n_rows: int):
+    """None for a constant learning rate; for ``cosine``, annealing to 0 over every batch of
+    every epoch (stepped once per batch)."""
+    if cfg.schedule == "constant":
+        return None
+    if cfg.schedule != "cosine":
+        raise ValueError(f"schedule must be constant or cosine, not {cfg.schedule!r}")
+    steps = cfg.epochs * max(1, -(-n_rows // cfg.batch_size))
+    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=steps)
+
+
 def fit(
     inputs: TaskInputs,
     train_rows: np.ndarray,
@@ -234,12 +278,15 @@ def fit(
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     device = torch.device(cfg.device)
+    if cfg.fusion != "late" and cfg.modality_dropout > 0:
+        # Loss-level dropout recombines the experts' opinions only; a fusion stage has
+        # already seen every modality, so fusion candidates drop inputs (input_dropout).
+        raise ValueError("modality_dropout is for late fusion; use input_dropout")
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
-    model = LateEvidential(
-        inputs, d=cfg.d, dropout=cfg.dropout, train_rows=train_rows, head=cfg.head
-    ).to(device)
+    model = build_model(inputs, cfg.fusion, cfg.d, cfg.dropout, train_rows, cfg.head).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler = make_scheduler(optimizer, cfg, len(train_rows))
     y_mean, y_std = 0.0, 1.0
     if inputs.y_reg is not None:
         y = inputs.y_reg[train_rows]
@@ -249,7 +296,7 @@ def fit(
     best, best_state, best_epoch, history = -np.inf, None, 0, []
     # A fixed sample of training rows, scored every epoch like the validation rows.
     probe = np.sort(rng.choice(train_rows, min(512, len(train_rows)), replace=False))
-    augment = (cfg, rng) if (cfg.photo_lags > 1 or cfg.photo_views) else None
+    augment = (cfg, rng) if (cfg.photo_lags > 1 or cfg.photo_views or cfg.input_dropout) else None
     started = time.perf_counter()
     for epoch in range(cfg.epochs):
         model.train()
@@ -263,6 +310,8 @@ def fit(
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             running += float(loss.detach()) * len(rows)
         score = selection_score(
             inputs, val_rows, predict(model, inputs, val_rows, cfg), y_mean, y_std

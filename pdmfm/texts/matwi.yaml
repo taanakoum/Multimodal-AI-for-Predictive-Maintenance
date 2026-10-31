@@ -1,0 +1,28 @@
+# MATWI single-insert milling (wear classes by flank wear, Nonastreda's thresholds: below 71,
+# 71 to 110, at least 110 um). The class descriptions are Nonastreda's, so both milling sets
+# have the same text prototypes. The label-space names differ: Nonastreda's classes are the
+# publisher's visual labels (18 of 378 passes disagree with the thresholds), MATWI's come
+# from the wear itself.
+dataset: matwi
+label_space: milling_wear3
+context: >-
+  CNC milling of {material} with a 15 mm cutter holding {inserts} carbide insert(s), at
+  {speed_text}. Spindle vibration (accelerometer), sound (microphone) and cutting forces in
+  three axes recorded during each cut; a photograph of the insert after each cut.
+templates:
+  sharp:
+    - A sharp milling cutter with little flank wear, below 71 micrometres.
+    - A new or nearly new cutting tool with an intact cutting edge.
+    - A milling tool at the start of its life, with minimal edge wear.
+  used:
+    - A used milling cutter with moderate flank wear, between 71 and 110 micrometres.
+    - A cutting tool with a visibly worn but still serviceable edge.
+    - A milling tool in mid-life, with medium flank wear.
+  dulled:
+    - A dull milling cutter with heavy flank wear, at least 110 micrometres.
+    - A worn-out cutting tool whose edge needs replacing.
+    - A milling tool at the end of its life, with severe flank wear.
+classes:
+  - sharp
+  - used
+  - dulled

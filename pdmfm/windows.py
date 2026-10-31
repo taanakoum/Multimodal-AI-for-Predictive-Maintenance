@@ -95,6 +95,14 @@ SPECS = {
         speed="none",
         image_kinds=("chip", "tool", "workpiece"),
     ),
+    "matwi": DatasetSpec(
+        "matwi",
+        ("fx", "fy", "fz", "acc", "mic"),
+        window=8192,  # 8.192 s at 1 kHz, as Nonastreda
+        bearing=False,
+        speed="none",
+        image_kinds=("insert",),
+    ),
     "paderborn": DatasetSpec(
         "paderborn", ("vibration", "current_1", "current_2"), slow=("temperature",)
     ),

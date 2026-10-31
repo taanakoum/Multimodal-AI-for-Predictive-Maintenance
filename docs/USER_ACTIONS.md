@@ -10,26 +10,25 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the image-fix and diagnostics pass (on top of `84f4add`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), now with step 5: Plan B (§16). The §1 archive now also carries the photo tokens and text prototypes | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B with the Gate-1 winner and on Paderborn | about 2-3 h of your time over a few days, the rest is queue and compute |
-| 3 | Obtain PHM 2010 (manual download) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
-| 4 | Decisions E-G (section 4): MATWI, a second paper, C-MAPSS | The image pathway and RUL beyond Nonastreda and XJTU-SY | 5 min |
-| — | Decisions A-D taken (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add` | — | — |
+| 1 | Commit and push the Gate-2 stage (on top of `a10b2b7`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). The §1 archive now also carries the MATWI window store; step 5 (§16) now ends with Gate 2 (§16.6) and the RUL runs (§16.7) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2 and RUL with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
+| 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
+| — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`; MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
-## 1. Commit and push the image-fix and diagnostics pass
+## 1. Commit and push the Gate-2 stage
 
-`84f4add` ("Codebase Audit and Evaluation Suite") holds the audit. This pass is not committed:
-the tested photo options, learning diagnostics, RUL after FPT, pooled intervals,
-`pdmfm.tune`, `pdmfm.stats`, their tests and the docs.
+`a10b2b7` holds tuning and the first MATWI pieces. Not committed yet: the MATWI reader and
+store support, the Gate-2 candidates and search, the RUL model, the OmniFuser lessons
+(schedule baseline, ordinal metrics), their tests and the docs.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb                  # modified modules, tests and docs; new: pdmfm/stats.py, pdmfm/tune.py, 2 test files
+git status -sb   # new: pdmfm/datasets/matwi.py, pdmfm/gate2.py, pdmfm/model/fusion.py, pdmfm/rul.py, pdmfm/texts/matwi.yaml, 3 test files
 git add -A
-git commit -m "Image-shortage fixes tested, learning diagnostics, RUL after FPT, tuning, pooled intervals"
+git commit -m "MATWI, Gate-2 fusion search with inner cross-validation, RUL from past snapshots"
 git push
 ```
 
@@ -62,11 +61,14 @@ show. In short:
 4. **Steps 2-3 (§13-§14):** the feature jobs, and the five PatchTST pretraining jobs with
    their feature jobs.
 5. **Step 4 (§15):** the Gate-1 probe on all four tasks.
-6. **Step 5 (§16): Plan B.** Read the Gate-1 winner with the §16.1 lines, tune each
-   dataset on its validation units (§16.2), then submit the §16.3 loop: Nonastreda, XJTU-SY and Paderborn with the winner and with the handcrafted
-   reference, plus a photo-free Nonastreda run. Check Paderborn's temperature as §16.4 says.
-7. **Step 6 (§17):** download the caches and results (now with `runs/planb`), then tell me. I
-   write up Gate 1 from `runs/gate1/gate1-v1/` and the Plan B tables from `runs/planb/`.
+6. **Step 5 (§16): Plan B, Gate 2 and RUL.** Read the Gate-1 winner with the §16.1 lines,
+   tune each dataset on its validation units (§16.2), then submit the §16.3 loop: Nonastreda,
+   MATWI, XJTU-SY and Paderborn with the winner and with the handcrafted reference, plus a
+   photo-free Nonastreda run. Check Paderborn's temperature as §16.4 says. Then the Gate-2
+   loop (§16.6: Nonastreda, MATWI, Paderborn; a few hours per job) and its test-unit run, and
+   the RUL loop (§16.7, CPU jobs).
+7. **Step 6 (§17):** download the caches and results (now with `runs/planb`, `runs/gate2`
+   and `runs/rul`), then tell me. I write up Gate 1, Plan B, Gate 2 and RUL from them.
 
 If you run only part of the runbook before Gate 1 is final, Plan B can still run on Paderborn
 with Mantis (its caches come from §13): use `--encoder mantis --arms F` in the §16.2 and §16.3 loops and
@@ -74,19 +76,26 @@ a run id such as `planb-mantis-paderborn`.
 
 ---
 
-## 3. PHM 2010 milling data
+## 3. PHM 2010 milling data (Kaggle)
 
 **Why.** The plan's second milling target (wear regression, leave-one-cutter-out), and the
 only milling set with a known spindle speed, which the physics score needs. The reader
 (`pdmfm/datasets/phm2010.py`) is written against the challenge description but has never
 seen the real files (`VERIFIED_ON_REAL_DATA = False`).
 
-**Where.** The original host (`cdn.teamholistic.net`) now serves a parking page. Options:
+**Where.** I checked every route on 2026-10-31; none can be fetched without your login:
 
-1. The [PHM Society challenge page](https://phmsociety.org/phm_competition/2010-phm-society-conference-data-challenge/): check whether it links the files again.
-2. IEEE DataPort (search "PHM 2010 data challenge"; free account).
-3. A Kaggle mirror. Use it only if it holds the **original zips** (`c1.zip` … `c6.zip`) with
-   per-cut CSV files and a `cN_wear.csv`, not a repackaged version.
+- the original host (`cdn.teamholistic.net`) serves a parking page, and the PHM Society
+  data repository links only that dead page;
+- IEEE DataPort lists the challenge without files (subscription);
+- **Kaggle** holds a copy of the challenge,
+  [`rabahba/phm-data-challenge-2010`](https://www.kaggle.com/rabahba/phm-data-challenge-2010):
+  six cutters c1-c6, about 300 per-cut CSV files each, and a wear file for c1, c4 and c6
+  (flank wear after each cut, in 10⁻³ mm). Downloading needs a Kaggle account. Its page warns
+  that one `c3.zip` copy with a wear file is incorrect: c3 is unlabelled in the challenge, and
+  we use c2, c3 and c5 only for pretraining, so ignore any c3 wear file.
+
+Take the original per-cutter zips (`c1.zip` … `c6.zip`), not a repackaged version.
 
 Do not use the Hugging Face mirror `AI4Manufacturing/PHM2010`. It is gated, states no
 licence and has been converted to parquet.
@@ -123,7 +132,7 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
 
 ---
 
-## 4. Decisions (taken 2026-10-29)
+## 4. Decisions
 
 | | Decision | What follows from it |
 |---|---|---|
@@ -131,14 +140,14 @@ substitute (250 Hz, RMS-processed signals, 16 cases). See decision A.
 | B | **Paderborn through Ruche** | Runbook §12; the VPN route is only the fallback if Ruche cannot reach the host |
 | C | **CWRU for pretraining and Gate 1 only**, never as evidence | No CWRU row in any result table; it stays one of Gate 1's four tasks and in the PatchTST corpus |
 | D | **Calibrated wear and RUL intervals** | Implemented: one scale factor on the predictive interval, fitted by NLL on the inner-validation units; every regression table shows `combined_calibrated` next to `combined` |
+| E | **MATWI added** (2026-10-31) | Downloaded in full (18 GB fit on D:), reader, insert crops, window store (11,043 windows), photo tokens and text prototypes built; a source dataset with 5 outer folds |
 
-### Open (2026-10-30)
+### Deferred (2026-10-31, at your request)
 
-| | Decision | Recommendation |
+| | Decision | Status |
 |---|---|---|
-| E | **Add MATWI** (KU Leuven): the only other public milling set that pairs a cutting-edge image with force, vibration and sound for every measurement. 17 tools run to failure, 1,578 paired measurements, wear in µm, C45 and 304 stainless, CC BY-SA 4.0, 17.7 GB. Its format was checked on one set (`PROJECT_LOG.md`, week 5). I download it and write the reader, window store and photo cache (about 1-2 days of my work) | **Yes.** It is the real fix for the image shortage: about 4 times Nonastreda's distinct photos, 1.7 times its tools, and an image-bearing transfer target for Goal 2 (Nonastreda ↔ MATWI). The KIT set the plan named has no photos at all |
-| F | **A second, short paper** on shortcuts in public predictive-maintenance data. The material exists: CWRU's recorder artifact, KAIST's session confound, Nonastreda's post-pass photos and persistence ceiling, Fz drift, metadata columns that identify classes | **Optional, after week 13.** A workshop paper at little extra cost |
-| G | **C-MAPSS** (turbofan run-to-failure, simulated, hundreds of engines) for RUL | **Not now.** The RUL weakness is the missing temporal context, not the number of datasets (`PROJECT_LOG.md`, week 5). Revisit only if RUL becomes a headline result |
+| F | **A second, short paper** on shortcuts in public predictive-maintenance data | Deferred. The material keeps growing: OmniFuser's run-number shortcut, Nonastreda's visual labels that disagree with its own wear on 18 passes, and the schedule baselines now in every table |
+| G | **C-MAPSS** for RUL | Deferred. The RUL model now reads past snapshots; revisit only if RUL becomes a headline result |
 
 Kept dropped: battery data (outside the scope of rotating machinery and milling), LLM
 fine-tuning (no instruction data; it would conflict with trustworthy output), and the KIT CNC

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-Kind = Literal["mendeley", "direct", "gdrive", "huggingface", "manual"]
+Kind = Literal["mendeley", "dataverse", "direct", "gdrive", "huggingface", "manual"]
 Role = Literal["source", "target", "source+target", "optional"]
 
 
@@ -23,6 +23,7 @@ class RemoteFile:
     relpath: str
     size: int | None = None
     sha256: str | None = None
+    md5: str | None = None  # Dataverse repositories publish MD5, not SHA-256
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,20 @@ XJTU_SY_PARTS = {
 }
 
 SOURCES: dict[str, DatasetSource] = {
+    "matwi": DatasetSource(
+        name="matwi",
+        title="MATWI: a Multimodal Automatic Tool Wear Inspection dataset",
+        kind="dataverse",
+        role="source",
+        licence="CC BY-SA 4.0",
+        citation="L. De Pauw, T. Jacobs, T. Goedemé, MATWI: a multimodal automatic tool wear "
+        "inspection dataset and baseline algorithms, ICVS 2023. doi:10.48804/GK6LHH",
+        homepage="https://doi.org/10.48804/GK6LHH",
+        params={"server": "https://rdr.kuleuven.be", "doi": "10.48804/GK6LHH"},
+        notes="17 single-insert milling tools run to failure; per measurement a cutting-edge "
+        "photo (5,496 x 3,672 JPG) and accelerometer, microphone, Fx, Fy, Fz at about 1.64 kHz "
+        "(55.6 s); expert flank wear in um; 17.7 GB in 17 zips.",
+    ),
     "nonastreda": DatasetSource(
         name="nonastreda",
         title="Nonastreda: multimodal dataset for identifying tool wear condition",

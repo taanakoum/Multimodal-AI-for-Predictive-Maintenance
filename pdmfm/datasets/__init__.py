@@ -27,6 +27,8 @@ def get_reader(name: str, **kwargs) -> Reader:
         from pdmfm.datasets.phm2010 import PHM2010 as cls
     elif name == "nasa_milling":
         from pdmfm.datasets.nasa_milling import NASAMilling as cls
+    elif name == "matwi":
+        from pdmfm.datasets.matwi import MATWI as cls
     else:
         raise KeyError(f"no reader for {name!r}")
     return cls(**kwargs)

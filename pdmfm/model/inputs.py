@@ -53,15 +53,20 @@ from pdmfm.features import FeatureStore
 from pdmfm.paths import interim_dir
 from pdmfm.windows import WindowStore
 
-ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "slow")
+ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "slow", "insert")
 ROLE = {name: i for i, name in enumerate(ROLES)}
-PHOTO_KINDS = ("tool", "chip", "workpiece")
+PHOTO_KINDS = ("tool", "chip", "workpiece", "insert")  # token order of the photo modality
 MAX_PHOTO_LAG = 3  # photos of up to the 3rd previous pass
 NO_LEVEL = {"nonastreda": ("fz",)}  # Fz drifts by block (EDA F10)
 DC_FAMILIES = ("force",)  # channels whose window mean ``force_mean`` adds
 LEVEL_MODES = ("relative", "both", "absolute")
 FOLD_BASELINE = ("paderborn",)  # level baseline from the fold's training units
-REGRESSION_TARGET = {"nonastreda": "wear_um", "xjtu_sy": "rul", "phm2010": "wear_um"}
+REGRESSION_TARGET = {
+    "nonastreda": "wear_um",
+    "matwi": "wear_um",
+    "xjtu_sy": "rul",
+    "phm2010": "wear_um",
+}
 
 
 @dataclass
@@ -140,7 +145,7 @@ def baseline_groups(
     """(group key per row, reference mask): a row's levels are taken relative to the median
     of the reference rows of its group. ``train_units`` is required where the reference is
     made of training units (``FOLD_BASELINE``)."""
-    if dataset == "nonastreda":  # the tool's first pass
+    if dataset in ("nonastreda", "matwi"):  # the tool's first pass or cut
         start = manifest.groupby("unit")["meta_t_start"].transform("min").to_numpy()
         first = manifest["meta_t_start"].to_numpy() == start
         return manifest["unit"].astype(str).to_numpy(), np.asarray(first)
@@ -347,7 +352,7 @@ def lagged_photo_index(manifest: pd.DataFrame, kind: str, index: dict[str, int])
 def _photo_modality(store: WindowStore, root: Path) -> Modality:
     manifest = store.manifest
     banks, lag_index, roles = [], [], []
-    for kind in PHOTO_KINDS:
+    for kind in [k for k in PHOTO_KINDS if k in store.spec.image_kinds]:
         paths, features = _image_cache(root, store.dataset, kind)
         index = {p: i for i, p in enumerate(paths)}
         wanted = manifest[f"image_{kind}"].astype(str).to_numpy()
