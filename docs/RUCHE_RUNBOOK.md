@@ -1,4 +1,4 @@
-# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1, Plan B, Gate 2 and RUL
+# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1, Plan B, Gate 2, RUL and baselines
 
 This runbook finishes stages 2-3 of the plan on **Ruche**, the cluster of the Mésocentre
 Paris-Saclay:
@@ -9,7 +9,9 @@ Paris-Saclay:
 - the Plan B baseline (stage 4) with the Gate-1 winner, on Nonastreda, MATWI, XJTU-SY and
   Paderborn;
 - Gate 2, the fusion search by inner cross-validation, on the multimodal datasets
-  (Nonastreda, MATWI, Paderborn), and the RUL model that reads past snapshots (XJTU-SY).
+  (Nonastreda, MATWI, Paderborn), and the RUL model that reads past snapshots (XJTU-SY);
+- the sensor-only baselines of every table (gradient boosting on handcrafted features, linear
+  probes, PatchTST trained from scratch) and the physics check of the Gate-1 winner.
 
 It follows the structure and the conventions of the OmniFuser runbook
 (`../OmniFuser/TRAINING_RUNBOOK_RUCHE.md`):
@@ -33,7 +35,7 @@ Ruche** (in the SSH session).
 |---|---|
 | Overview | What runs where · the jobs · before you start · the path at a glance |
 | A: Set up (once) | §1 Laptop · §2 Connect · §3 Storage · §4 Code · §5 Data · §6 Python environment · §7 `slurm/env.sh` · §8 Weights · §9 SLURM scripts |
-| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B, Gate 2 and RUL · §17 Step 6: download |
+| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B, Gate 2, RUL and baselines · §17 Step 6: download |
 | C: Operating | §18 Watch, resume, cancel · §19 Troubleshooting · §20 Rules · §21 Cheat sheet |
 
 ## Overview
@@ -54,6 +56,8 @@ Ruche** (in the SSH session).
 | MATWI sensor caches (Mantis, MOMENT, PatchTST) | Ruche GPU | 11,043 windows × 5 channels: about 2 h per encoder on the laptop CPU |
 | Gate 2: 6 candidates × 20 inner folds per dataset | Ruche GPU | About 22 CPU-hours per dataset on the laptop (Perceiver 40 s and MBT 26 s per epoch); the laptop ran a 4-candidate pilot (`PROJECT_LOG.md`, week 6) |
 | RUL from past snapshots (XJTU-SY) | Laptop (done with Mantis) or a Ruche CPU job | Minutes per fold; rerun with the Gate-1 winner |
+| Baselines: gradient boosting, Mantis and handcrafted probes; band occlusion, anomaly scores, leakage checks, the paired report | Laptop (done; `PROJECT_LOG.md`, week 7) | Seconds to minutes on cached features |
+| Baselines with the Gate-1 winner, MOMENT and Paderborn; PatchTST from scratch; the physics check of the winner | Ruche (§16.8): CPU job, GPU jobs | Need the full caches; PatchTST trains on raw windows |
 
 ### The jobs
 
@@ -64,7 +68,7 @@ Ruche** (in the SSH session).
 | 2 | Feature caches: handcrafted (CPU), Mantis, MOMENT, AST (GPU) | `cpu_short`, `gpua100` | Minutes to an hour each | `$PDMFM_DATA_ROOT/interim/features/` |
 | 3 | PatchTST pretraining, one model per outer fold, then its features | `gpua100` | Under an hour per fold | `runs/patchtst/fold1..5/` |
 | 4 | Gate-1 probe | `cpu_short` | Under 1 h | `runs/gate1/gate1-v1/` |
-| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference; then Gate 2 and RUL | `gpua100`, `cpu_short` | Minutes to an hour per Plan B job; a few hours per Gate-2 job | `runs/planb/planb-v1-*/`, `runs/gate2/gate2-v1-*/`, `runs/rul/rul-v1-*/` |
+| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference; then Gate 2, RUL and the baselines | `gpua100`, `cpu_short` | Minutes to an hour per Plan B job; a few hours per Gate-2 or PatchTST job | `runs/planb/planb-v1-*/`, `runs/gate2/gate2-v1-*/`, `runs/rul/rul-v1-*/`, `runs/baselines/*-v1-*/`, `runs/explain/pas-v1-*/` |
 | 6 | Download caches and results | laptop | Minutes | `D:\Project14\data\interim\features`, `runs/` |
 
 The times are estimates. The first job of each kind tells you the real ones (§18).
@@ -500,7 +504,7 @@ sbatch --job-name=gate1 slurm/cpu.sbatch python -m pdmfm.probe --run-id gate1-v1
 - If no frozen encoder beats your own PatchTST, the plan's Gate 1 picks the self-pretrained
   PatchTST.
 
-## 16. Step 5: Plan B, Gate 2 and RUL
+## 16. Step 5: Plan B, Gate 2, RUL and baselines
 
 Plan B is the plan's stage 4 and its fallback model: one evidential expert per modality,
 combined by Dempster's rule for the classes and by MoNIG for wear and RUL. It trains on the
@@ -658,6 +662,62 @@ Each run writes `runs/rul/<run-id>/summary.md` (the same tables as Plan B, with 
 resampling bearings). If the Gate-1 winner is Mantis with arms F E, the laptop runs of
 `PROJECT_LOG.md` (week 6) already answer this step.
 
+**16.8 Baselines and the physics check** (after §16.1; independent of Gate 2, so they can
+run next to it). Every table needs sensor-only baselines next to Plan B, scored on the same
+test bags with the same folds (`pdmfm.baselines`; `PROJECT_LOG.md`, week 7). The tabular ones
+are light, so one CPU job runs them all; if it reaches its 1 h limit, submit it again
+(finished folds are skipped):
+
+```bash
+sbatch --job-name=baselines --time=01:00:00 slurm/cpu.sbatch bash -c "
+for dataset in nonastreda matwi xjtu_sy paderborn; do
+  python -m pdmfm.baselines --method gbm --dataset \$dataset --run-id gbm-v1-\$dataset --force
+  python -m pdmfm.baselines --method probe --encoder '$ENCODER' --arms $ARMS --dataset \$dataset --run-id probe-v1-\$dataset --force
+  python -m pdmfm.baselines --method probe --encoder moment --arms T F E --dataset \$dataset --run-id probe-moment-v1-\$dataset --force
+done"
+```
+
+- `$ENCODER` and `$ARMS` are filled in when you submit; the escaped `\$dataset` is filled in
+  by the job. Check the first lines of its log: they name the encoder.
+- The gradient-boosting features (`stats` arms, the four level descriptors, the defect-line
+  prominences of bearings) need only the §13 `stats` caches. The MOMENT probe needs its
+  §13 caches (E is dropped where a dataset has none).
+
+PatchTST trained from scratch (supervised, on the raw T-arm segments) needs a GPU, one job
+per dataset, 5 folds × 3 seeds:
+
+```bash
+for dataset in nonastreda matwi xjtu_sy paderborn; do
+  sbatch --job-name=patchtst-$dataset --time=08:00:00 slurm/job.sbatch \
+    python -m pdmfm.baselines --method patchtst --dataset $dataset --run-id patchtst-v1-$dataset --device cuda
+done
+```
+
+A log line per epoch: `[baselines] patchtst epoch 12: loss 0.4312, validation 0.581`. On the
+laptop CPU one Nonastreda epoch took about 70 s with 4 threads (`PROJECT_LOG.md`, week 7); an A100
+is far faster.
+
+The physics check of the Gate-1 winner: band occlusion of its probe on CWRU (fit on 0-2 hp,
+explained on the 3 hp windows), with the E arm, whose order axis is where bearing defect
+lines live:
+
+```bash
+EXTRA=""
+case "$ENCODER" in patchtst*) EXTRA="--checkpoint runs/patchtst/fold1/model"; ENC=patchtst-fold1;; *) ENC=$ENCODER;; esac
+sbatch --job-name=explain-cwru --time=02:00:00 slurm/job.sbatch \
+  python -m pdmfm.explain --encoder "$ENC" --arms F E --run-id pas-v1-cwru --device cuda $EXTRA
+```
+
+- CWRU's 3 hp windows are in no fold's PatchTST corpus, so fold 1's model is the right one.
+- The result is `runs/explain/pas-v1-cwru/summary.md`. On the laptop, Mantis F + E scored PAS
+  0.96 on the order axis (no better than its randomized copy, 1.07), and the handcrafted
+  probe 1.17 (randomized 0.69); both classify the 3 hp windows perfectly.
+
+`bash slurm/status.sh` lists the runs under `== Baselines` (5 results for gbm and probe, 15
+for PatchTST) with the physics checks. After the download (§17) I run the paired report
+(`pdmfm.report`), the leakage checks and the anomaly tables on the laptop: they read only
+cached features and result files.
+
 **Resuming.** A job that stops at its time limit continues when you submit the same command
 again: finished folds and seeds are skipped. The same `--run-id` with other settings is
 refused (`… holds a run with other settings; use another --run-id`), so a changed option
@@ -668,7 +728,7 @@ needs a new run id.
 Pack on Ruche (small; the login node is fine):
 
 ```bash
-cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/logs
+cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/baselines runs/explain runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz

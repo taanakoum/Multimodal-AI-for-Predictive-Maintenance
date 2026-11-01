@@ -1,7 +1,7 @@
 #!/bin/bash
 # One-screen overview: your jobs, the window stores, the feature caches, the PatchTST
-# pretraining runs, the Gate-1, Plan B, Gate-2 and RUL runs, logs that contain errors, and
-# disk use.
+# pretraining runs, the Gate-1, Plan B, Gate-2, RUL and baseline runs, logs that contain
+# errors, and disk use.
 # Usage, from anywhere:  source slurm/env.sh && bash slurm/status.sh
 # It only reads files, so it may run on the login node.
 cd "$(dirname "$0")/.." || exit 1
@@ -93,6 +93,22 @@ for folder in runs/rul/*/; do
     found=1
     n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
     echo "  $(basename "$folder"): $n of 15"
+done
+[ "$found" -eq 1 ] || echo "  none yet"
+
+echo
+echo "== Baselines (fold x seed results: 5 for gbm and probe, 15 for patchtst) and physics checks"
+found=0
+for folder in runs/baselines/*/; do
+    [ -d "$folder" ] || continue
+    found=1
+    n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
+    echo "  $(basename "$folder"): $n results"
+done
+for summary in runs/explain/*/summary.json; do
+    [ -f "$summary" ] || continue
+    found=1
+    echo "  explain $(basename "$(dirname "$summary")"): done"
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 

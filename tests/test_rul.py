@@ -209,6 +209,7 @@ def test_run_writes_plan_b_compatible_results_and_resumes(root):
     assert result["baselines"]["schedule_regression"]["rmse"] == pytest.approx(0, abs=1e-6)
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "## Regression (bag level)" in summary and "combined, after FPT" in summary
+    assert summary.startswith("# RUL from past snapshots: ")
     pooled = pd.read_csv(out / "pooled.csv")
     assert {"RMSE, model", "RMSE after FPT, model", "RMSE, schedule"} <= set(pooled["quantity"])
     messages = []

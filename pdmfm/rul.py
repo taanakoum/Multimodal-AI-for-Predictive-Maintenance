@@ -364,7 +364,7 @@ def run(
             bags["pred_reg"] = test_nig[:, 0] * ys + ym
             bags.to_csv(out / f"fold{fold}-seed{seed}-bags.csv", index=False)
             write_json_atomic(path, result)
-    summarize(out)
+    summarize(out, title="RUL from past snapshots")
     return out
 
 

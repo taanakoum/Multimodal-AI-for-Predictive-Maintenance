@@ -112,6 +112,9 @@ SERIES = np.random.default_rng(1).standard_normal((3, 512)).astype(np.float32)
 @pytest.mark.slow
 @pytest.mark.weights("paris-noah/Mantis-8M")
 def test_mantis_checkpoint():
+    # Weights cached but the optional "encoders" extra absent (a fresh environment that
+    # inherits HF_HOME): skip, as the MOMENT test does.
+    pytest.importorskip("mantis")
     encoder = encoders.get_encoder("mantis")
     z = encoder.encode(SERIES)
     assert z.shape == (3, 256) and np.isfinite(z).all()
@@ -129,6 +132,7 @@ def test_moment_checkpoint():
 @pytest.mark.slow
 @pytest.mark.weights("MIT/ast-finetuned-audioset-10-10-0.4593")
 def test_ast_checkpoint_on_one_second_windows():
+    pytest.importorskip("transformers")
     encoder = encoders.get_encoder("ast")
     window = np.random.default_rng(2).standard_normal((2, pp.WINDOW_SAMPLES)).astype(np.float32)
     z = encoder.encode(window)
@@ -139,6 +143,7 @@ def test_ast_checkpoint_on_one_second_windows():
 @pytest.mark.slow
 @pytest.mark.weights("facebook/dinov2-small")
 def test_dinov2_photo_tokens(tmp_path):
+    pytest.importorskip("transformers")
     from PIL import Image
 
     path = tmp_path / "tool.png"
@@ -154,6 +159,7 @@ def test_dinov2_photo_tokens(tmp_path):
 @pytest.mark.slow
 @pytest.mark.weights("Qwen/Qwen3-Embedding-0.6B")
 def test_qwen3_text_embeddings_are_normalized():
+    pytest.importorskip("sentence_transformers")
     z = encoders.Qwen3TextEncoder().encode(["An outer-race defect.", "A healthy bearing."])
     assert z.shape == (2, 1024)
     np.testing.assert_allclose(np.linalg.norm(z, axis=1), 1.0, rtol=1e-4)

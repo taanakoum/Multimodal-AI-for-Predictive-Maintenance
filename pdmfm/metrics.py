@@ -156,7 +156,8 @@ def phm2012_score(actual: np.ndarray, predicted: np.ndarray) -> float:
     if not keep.any():
         return float("nan")
     error = 100.0 * (actual[keep] - predicted[keep]) / actual[keep]
-    score = np.where(
-        error <= 0, np.exp(-np.log(0.5) * error / 5.0), np.exp(np.log(0.5) * error / 20.0)
-    )
+    with np.errstate(over="ignore"):  # np.where evaluates both branches; one may overflow
+        score = np.where(
+            error <= 0, np.exp(-np.log(0.5) * error / 5.0), np.exp(np.log(0.5) * error / 20.0)
+        )
     return float(score.mean())

@@ -10,25 +10,28 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the week-6 results write-up (docs only, on top of `b2b7d4d`); check that CI is green for `b2b7d4d` | Ruche clones the repository from GitHub | 5 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). The §1 archive now also carries the MATWI window store; step 5 (§16) now ends with Gate 2 (§16.6) and the RUL runs (§16.7) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2 and RUL with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
+| 1 | Commit and push the week-7 stage (report statistics, baselines, leakage checks, anomaly detection, band occlusion; on top of `6866791`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). Step 5 (§16) now ends with Gate 2 (§16.6), the RUL runs (§16.7) and the baselines with the physics check (§16.8: one CPU job, four PatchTST GPU jobs, one explain job) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2, RUL and the baselines with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
 | 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
 | — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
-## 1. Commit and push the week-6 write-up
+## 1. Commit and push the week-7 stage
 
-`b2b7d4d` holds the code of this stage (MATWI, Gate 2, the RUL model, the OmniFuser lessons)
-and its tests. Not committed yet: the week-6 results in `PROJECT_LOG.md`, the RUL flag fix in
-the runbook (§16.7), the test counts in `docs/CI.md` and this file.
+New since `6866791`: `pdmfm/report.py` (paired tests over units, Holm), `pdmfm/baselines.py`
+(gradient boosting, probes, PatchTST from scratch), `pdmfm/leakage.py`, `pdmfm/anomaly.py`,
+`pdmfm/explain.py` (band occlusion, physics score), their five test files, small changes in
+`arms.py`, `planb.py`, `rul.py`, `metrics.py`, `slurm/status.sh`, import guards in
+`tests/test_encoders.py`, and the docs (`PROJECT_LOG.md`
+week 7, the plan's amendments, the runbook's §16.8, `docs/CI.md`, `README.md`, this file).
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb   # PROJECT_LOG.md, docs/CI.md, docs/RUCHE_RUNBOOK.md, docs/USER_ACTIONS.md
+git status -sb
 git add -A
-git commit -m "Week 6 results: Gate-2 pilot, RUL from past snapshots, MATWI with Plan B"
+git commit -m "Week 7: report statistics, baselines, leakage checks, anomaly detection, physics score"
 git push
 ```
 
@@ -66,9 +69,13 @@ show. In short:
    MATWI, XJTU-SY and Paderborn with the winner and with the handcrafted reference, plus a
    photo-free Nonastreda run. Check Paderborn's temperature as §16.4 says. Then the Gate-2
    loop (§16.6: Nonastreda, MATWI, Paderborn; a few hours per job) and its test-unit run, and
-   the RUL loop (§16.7, CPU jobs).
-7. **Step 6 (§17):** download the caches and results (now with `runs/planb`, `runs/gate2`
-   and `runs/rul`), then tell me. I write up Gate 1, Plan B, Gate 2 and RUL from them.
+   the RUL loop (§16.7, CPU jobs). Then §16.8: the baselines (one CPU job for gradient
+   boosting and the probes, one PatchTST GPU job per dataset) and the physics check of the
+   Gate-1 winner (one GPU job); they do not wait for Gate 2.
+7. **Step 6 (§17):** download the caches and results (now with `runs/planb`, `runs/gate2`,
+   `runs/rul`, `runs/baselines` and `runs/explain`), then tell me. I write up Gate 1, Plan B,
+   Gate 2 and RUL from them, with the paired reports, the leakage checks and the anomaly
+   tables, which run on the laptop from the downloaded caches.
 
 If you run only part of the runbook before Gate 1 is final, Plan B can still run on Paderborn
 with Mantis (its caches come from §13): use `--encoder mantis --arms F` in the §16.2 and §16.3 loops and
@@ -157,31 +164,44 @@ set (no photos and no wear labels).
 
 ## What comes next (my side)
 
-Where things stand (`PROJECT_LOG.md`, week 6): Gate 2 is built and validated; its pilot on
-Nonastreda (four candidates, Mantis) keeps Plan B by the rule, with the fusion candidates
-more robust and better calibrated. The RUL model with past snapshots does not beat Plan B on
-XJTU-SY, so Plan B stays for RUL too. MATWI is built and hard across tools.
+Where things stand (`PROJECT_LOG.md`, week 7): the report statistics, the sensor-only
+baselines, the leakage checks, anomaly detection and the physics score are built, tested and
+run on the local data. On Nonastreda, Plan B (force + photos) beats every sensor-only
+baseline on all 10 test tools and ties persistence; on XJTU-SY and MATWI the baselines tie
+Plan B. The Mantis-based probe classifies CWRU perfectly without relying on the defect lines
+(physics score 0.96, randomized 1.07); the handcrafted probe does rely on them (1.17).
 
 | When | Stage | What I do locally | What needs Ruche (your step 2) |
 |---|---|---|---|
-| Now, until your Ruche results | Gate 2 decision | Nothing blocks; I wait for §16.6 | The full search (6 candidates, Gate-1 winner) on Nonastreda, MATWI and Paderborn, and its test-unit run |
+| Now, until your Ruche results | Gate 2 decision; baselines; reports | Nothing blocks; with the results: the paired reports per dataset, leakage and anomaly tables with MOMENT and the Gate-1 winner | §16.6 (Gate 2), §16.8 (baselines, physics check) |
 | Weeks 8-9 | Pretraining | If a fusion candidate wins: masked latent modelling, cross-modal InfoNCE (force ↔ photo on both milling sets) and text anchoring on the cached tokens, each fold's held-out units excluded. If Plan B stays: the same losses on Plan B's per-modality adapters (the plan's fallback) | The pretraining jobs |
-| Weeks 10-11 | Adaptation (Goal 2) | Few-shot draws, linear probe vs LoRA vs full fine-tuning; targets KAIST, Paderborn real damage, PHM 2010 (or NASA milling, decision A), and MATWI ↔ Nonastreda | The sweeps (holiday queue) |
-| Week 12 | Trust and explanations (Goal 3) | Calibration and coverage tables, missing-modality curves, the physics score, deletion tests, explanation cards | Possibly the occlusion runs |
+| Weeks 10-11 | Adaptation (Goal 2) | Few-shot draws, linear probe vs LoRA vs full fine-tuning; targets KAIST, Paderborn real damage, PHM 2010 (or NASA milling, decision A), and MATWI ↔ Nonastreda; the anomaly protocol on KAIST and Paderborn real damage (`--final`) | The sweeps (holiday queue) |
+| Week 12 | Trust and explanations (Goal 3) | Band occlusion on the final model, explanation cards (the physics line only where PAS passes), missing-modality curves, calibration tables | Possibly the occlusion runs |
 
-Carried forward, in order of value:
+Improvements found this week, for your go-ahead (details and costs in `PROJECT_LOG.md`, week 7):
+
+1. **Defect-line tokens** in the vibration expert (the line prominences the gradient-boosting
+   baseline already uses): physics-grounded inputs that transfer across bearings; about a day.
+2. **Baseline-relative embeddings** (each unit's healthy-baseline embedding subtracted):
+   frozen features identify the machine perfectly; relative levels already halve it.
+3. **Predict the wear change since the previous pass** on milling, where persistence is the
+   strongest baseline; one or two days.
+4. **One stratified test across datasets** for the paper's headline claims; hours.
+5. **A label-free onset metric and an adaptive healthy reference** for XJTU-SY, whose FPT
+   labels are an RMS rule; hours.
+6. **Less weight on CWRU as evidence** (saturated, and solved without its physics).
+7. **Healthy support from other recordings** in the stage-8 anomaly runs (KAIST's 4 Nm
+   healthy data is one recording, so same-recording support flatters the false alarms).
+
+Carried forward:
 - **Cross-tool generalization is the limit on both milling sets** (training macro-F1 0.93
-  against 0.41-0.78 on test tools). Pretraining across both sets and the transfer targets
-  address it; more Nonastreda options do not.
+  against 0.41-0.78 on test tools).
 - **RUL:** Plan B's expert embedding, cross-fitted, as the input of the sequence model; the
   plan's health indicator with TimesFM; C-MAPSS only if you reopen decision G.
-- **Nonastreda's labels:** 18 passes disagree with their own wear and T6's validation scores
-  are the floor of every candidate. Report as is; a threshold-label variant is one table
-  if the report needs it.
-- **A steadier interval calibration** (cross-fitted on the training units): MATWI's raw 90 %
-  intervals cover 29 %, calibrated 85 % at a large width.
-- **The supervised from-scratch PatchTST baseline**, paired tests with Holm correction, and
-  the text projection W_t before any zero-shot claim (unchanged from week 5).
+- **Nonastreda's labels:** 18 passes disagree with their own wear; T6 is the floor of every
+  candidate.
+- **A steadier interval calibration** (cross-fitted on the training units).
+- **The text projection W_t** before any zero-shot claim.
 
 ---
 

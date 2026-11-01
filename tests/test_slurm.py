@@ -75,6 +75,7 @@ def test_status_runs_without_squeue(tmp_path):
         "== Plan B",
         "== Gate-2",
         "== RUL",
+        "== Baselines",
     ):
         assert header in result.stdout
 
@@ -106,3 +107,19 @@ def test_status_counts_gate2_and_rul_results(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "gate2-v1-nonastreda: concat 1, planb 2; model planb" in result.stdout
     assert "rul-v1-xjtu: 1 of 15" in result.stdout
+
+
+def test_status_counts_baseline_runs(tmp_path):
+    run = tmp_path / "runs" / "baselines" / "gbm-v1-nonastreda"
+    run.mkdir(parents=True)
+    for name in ("fold1-seed0.json", "fold2-seed0.json", "fold1-seed0-bags.csv"):
+        (run / name).write_text("{}")
+    explained = tmp_path / "runs" / "explain" / "pas-v1-cwru"
+    explained.mkdir(parents=True)
+    (explained / "summary.json").write_text("{}")
+    shutil.copytree(SLURM, tmp_path / "slurm")
+    env = {**os.environ, "PDMFM_DATA_ROOT": str(tmp_path / "data")}
+    result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "gbm-v1-nonastreda: 2 results" in result.stdout
+    assert "explain pas-v1-cwru: done" in result.stdout

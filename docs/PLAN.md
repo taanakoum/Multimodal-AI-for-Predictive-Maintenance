@@ -64,6 +64,29 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   run number alone beat its model), ordinal metrics and the ordinal-median decision for the
 >   wear classes (reported next to argmax, never instead), and accuracy on the bags where the
 >   class changes.
+> - (2026-11-01) Paired tests are run over test units (`pdmfm.report`): a Wilcoxon
+>   signed-rank test of the per-unit metric (seeds averaged), Holm-corrected per table, next
+>   to unit-resampled intervals of the pooled values and of their paired differences. Both the
+>   pooled value (units weighted by their bags) and the unit average are reported; on XJTU-SY
+>   they can disagree, because a few long-lived bearings dominate the pooled RMSE.
+> - (2026-11-01) The anomaly kNN score is the cosine distance on the cached features as they
+>   are; centring them on a 10-window support first made every vector nearly orthogonal
+>   (checked on the source datasets only). KAIST and Paderborn real damage are refused before
+>   stage 8. XJTU-SY's FPT labels come from an RMS 3σ rule, so the RMS alarm is close to the
+>   label definition there.
+> - (2026-11-01) Band occlusion removes lines instead of zeroing a band: inside the band every
+>   magnitude becomes the band's median, phases kept. Two axes: the raw spectrum (Hz) and the
+>   envelope order spectrum (the E-arm input), where bearing defect lines live. The trained
+>   weights randomized for the Adebayo test are the probe's classifier (the encoder is frozen).
+>   The physics probe runs on CWRU (fit on 0-2 hp, explained on 3 hp).
+> - (2026-11-01) The handcrafted gradient-boosting baseline adds, for bearings, the prominence
+>   of the defect lines (BPFO, BPFI, BSF, FTF; k = 1..3) in the envelope order spectrum. The
+>   from-scratch PatchTST baseline uses the own PatchTST's architecture on the T-arm segments
+>   (`pdmfm.baselines`).
+> - (2026-11-01) MATWI's context sentences (8 cutting conditions) predict its wear class above
+>   the majority (+0.18 macro-F1 [0.05, 0.33], `pdmfm.leakage`): a model that reads MATWI's
+>   context must be compared with the context-lookup baseline, and text anchoring ablates the
+>   context token there.
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or

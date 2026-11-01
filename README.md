@@ -58,7 +58,7 @@ pre-commit install                        # same lint and format checks before e
 
 GitHub Actions runs lint, then tests on Ubuntu and Windows with Python 3.11 and 3.12, then an advisory type check. A weekly workflow checks that the data sources still serve the files we used. See [`docs/CI.md`](docs/CI.md).
 
-## Pipeline (stages 1-5 of the plan)
+## Pipeline (stages 1-5 of the plan, with the baselines, report and trust checks)
 
 ```powershell
 python -m pdmfm.windows build cwru kaist xjtu_sy nonastreda matwi   # 1: window stores (model input, labels, contexts)
@@ -71,6 +71,11 @@ python -m pdmfm.tune --dataset nonastreda --encoder mantis --arms F --run-id tun
 python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona     # 4: Plan B
 python -m pdmfm.gate2 --dataset nonastreda --encoder mantis --arms F --run-id gate2-nona     # 5: Gate 2
 python -m pdmfm.rul --encoder mantis --arms F E --run-id rul-xjtu --compare runs/planb/<run>  #    RUL from past snapshots
+python -m pdmfm.baselines --method gbm --dataset nonastreda --run-id gbm-nona   # sensor-only baselines (gbm, probe, patchtst)
+python -m pdmfm.report --name nona --run planb=runs/planb/<run> --run gbm=runs/baselines/gbm-nona   # 12: paired tests
+python -m pdmfm.leakage context dataset --run-id leak            #    context and dataset-identity checks
+python -m pdmfm.anomaly --dataset xjtu_sy --features mantis:F --run-id an-xjtu   # 10: healthy-only detection
+python -m pdmfm.explain --encoder mantis --arms F E --run-id pas-cwru   # 11: band occlusion, physics score
 python -m pdmfm.features status                                  # what is cached
 ```
 
@@ -96,7 +101,15 @@ python -m pdmfm.features status                                  # what is cache
   experts, ranked against Plan B by inner cross-validation, with validation rotated over the
   training units (`pdmfm.gate2`). RUL gets a causal model over each bearing's past snapshots
   (`pdmfm.rul`).
-- **Ruche.** MOMENT, AST and PatchTST at full scale, and the full Gate 2, run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
+- **Baselines and statistics.** Sensor-only baselines on the same folds (gradient boosting on
+  handcrafted features with defect-line prominences, linear probes, PatchTST from scratch;
+  `pdmfm.baselines`) and paired comparisons over test units: unit-resampled intervals,
+  Wilcoxon signed-rank tests, Holm correction (`pdmfm.report`).
+- **Checks of trust and leakage.** The context text alone against the majority and the
+  dataset identity of the features (`pdmfm.leakage`); anomaly detection from healthy data only
+  (`pdmfm.anomaly`; the held-out targets stay locked until stage 8); band occlusion with the
+  physics alignment score, a weight-randomization test and deletion curves (`pdmfm.explain`).
+- **Ruche.** MOMENT, AST and PatchTST at full scale, the full Gate 2 and the GPU baselines run there: [`docs/RUCHE_RUNBOOK.md`](docs/RUCHE_RUNBOOK.md).
 
 ## Heavy jobs and Ruche
 

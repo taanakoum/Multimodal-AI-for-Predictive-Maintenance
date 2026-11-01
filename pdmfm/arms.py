@@ -56,22 +56,35 @@ def arm_input(store: WindowStore, rows: np.ndarray, arm: str) -> np.ndarray:
     rows = np.asarray(rows)
     channels = list(arm_channels(store, arm))
     windows = np.asarray(store.signals[rows][:, channels], dtype=np.float32)  # (n, C, L)
-    n, c, _ = windows.shape
+    shaft = store.manifest["shaft_hz"].to_numpy(dtype=float)[rows]
+    try:
+        return window_input(windows, store.rate, arm, shaft)
+    except ValueError as error:
+        raise ValueError(f"{store.dataset}: {error}") from error
+
+
+def window_input(
+    windows: np.ndarray, rate: float, arm: str, shaft: np.ndarray | None = None
+) -> np.ndarray:
+    """(n, C, inputs, 512) float32 encoder inputs of raw windows (n, C, L) at ``rate``, the
+    channels already chosen for ``arm``; E needs each window's shaft speed in Hz. Used for
+    stored windows (:func:`arm_input`) and for modified ones (band occlusion)."""
+    windows = np.asarray(windows, dtype=np.float32)
+    n, c, length = windows.shape
     if arm == "T":
-        return windows[:, :, : n_inputs(store, arm) * pp.SEGMENT].reshape(n, c, -1, pp.SEGMENT)
+        segments = length // pp.SEGMENT
+        return windows[:, :, : segments * pp.SEGMENT].reshape(n, c, segments, pp.SEGMENT)
     if arm == "S":
         return windows[:, :, None, :]
     out = np.empty((n, c, 1, pp.SEGMENT), dtype=np.float32)
-    shaft = store.manifest["shaft_hz"].to_numpy(dtype=float)[rows]
     for i in range(n):
         for j in range(c):
             if arm == "F":
-                out[i, j, 0] = pp.log_spectrum(windows[i, j], store.rate, pp.SEGMENT)[0]
+                out[i, j, 0] = pp.log_spectrum(windows[i, j], rate, pp.SEGMENT)[0]
             else:
-                if not np.isfinite(shaft[i]):
-                    raise ValueError(f"{store.dataset} row {rows[i]}: no shaft speed for E")
-                spectrum = pp.envelope_order_spectrum(windows[i, j], store.rate, shaft[i])[0]
-                out[i, j, 0] = spectrum
+                if shaft is None or not np.isfinite(shaft[i]):
+                    raise ValueError(f"window {i}: no shaft speed for E")
+                out[i, j, 0] = pp.envelope_order_spectrum(windows[i, j], rate, shaft[i])[0]
     return out
 
 

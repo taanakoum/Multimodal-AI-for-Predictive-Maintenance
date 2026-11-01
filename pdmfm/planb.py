@@ -562,8 +562,9 @@ def _flatten(prefix: str, obj, out: dict) -> None:
         out[prefix] = float(obj)
 
 
-def summarize(out: Path) -> pd.DataFrame:
-    """Mean and std over fold x seed of every metric; ``summary.md`` shows the main ones."""
+def summarize(out: Path, title: str = "Plan B") -> pd.DataFrame:
+    """Mean and std over fold x seed of every metric; ``summary.md`` shows the main ones
+    (``title``: what the run is, for the baselines that share this layout)."""
     rows = []
     for path in sorted(out.glob("fold*-seed*.json")):
         result = json.loads(path.read_text(encoding="utf-8"))
@@ -589,7 +590,7 @@ def summarize(out: Path) -> pd.DataFrame:
     if len(pooled):
         pooled.to_csv(out / "pooled.csv", index=False)
     (out / "summary.md").write_text(
-        _markdown(out.name, summary, len(rows), pooled), encoding="utf-8"
+        _markdown(out.name, summary, len(rows), pooled, title), encoding="utf-8"
     )
     return summary
 
@@ -710,13 +711,17 @@ def _row(summary: pd.DataFrame, label: str, keys: list[str | None]) -> str:
 
 
 def _markdown(
-    run_id: str, summary: pd.DataFrame, runs: int, pooled: pd.DataFrame | None = None
+    run_id: str,
+    summary: pd.DataFrame,
+    runs: int,
+    pooled: pd.DataFrame | None = None,
+    title: str = "Plan B",
 ) -> str:
     keys = sorted(
         {k.split(".")[1] for k in summary.index if k.startswith("test.") and k.count(".") >= 3}
     )
     lines = [
-        f"# Plan B: {run_id}",
+        f"# {title}: {run_id}",
         "",
         f"{runs} runs (outer folds x seeds); test units; mean ± std.",
         "",

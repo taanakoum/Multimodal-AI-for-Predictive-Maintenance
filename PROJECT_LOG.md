@@ -2,16 +2,16 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-10-31)
+## Status at a glance (updated 2026-11-01)
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. The full Gate 2, the GPU caches and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
-| Tests | See "Week 5" below for the counts; lint, format, pyright and pre-commit clean |
+| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. Week 7: the report statistics (paired tests over units, Holm), sensor-only baselines, leakage checks, anomaly detection and the physics score are built and run locally. The full Gate 2, the GPU caches, the GPU baselines and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
+| Tests | See "Week 7" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, MATWI, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda, MATWI. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (your Kaggle download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
-| Needs you | `docs/USER_ACTIONS.md`: commit and push this stage; run the Ruche runbook (now with MATWI, Gate 2 and RUL, §16.5-§16.7); PHM 2010 from Kaggle. Decisions F and G deferred |
+| Needs you | `docs/USER_ACTIONS.md`: commit and push this stage; run the Ruche runbook (now with MATWI, Gate 2, RUL and the baselines, §16.5-§16.8); PHM 2010 from Kaggle; say which of the seven improvements of week 7 to build. Decisions F and G deferred |
 
 ## Week 1 — setup, downloads and verification
 
@@ -159,6 +159,10 @@ Week 2 (Nov 2-8, plan):
 | 2026-10-31 | Plan B stays the RUL model; the past-snapshot GRU is kept as code and not adopted | It scored below Plan B on validation; longer histories scored lower |
 | 2026-10-31 | Schedule baseline, ordinal metrics and accuracy on class changes in every table | OmniFuser's run number alone beat its model |
 | 2026-10-31 | Nonastreda keeps the publisher's visual labels | Comparability with the dataset's own results; 18 of 378 passes disagree with the wear thresholds, stated with every result |
+| 2026-11-01 | Paired tests over test units (Wilcoxon, seeds averaged), Holm per table; pooled and unit-averaged values both reported | Fold × seed runs are not independent pairs; long-lived bearings dominate pooled RUL errors |
+| 2026-11-01 | Anomaly kNN on the cached features as they are | Centring on a 10-window support made the vectors orthogonal (checked on source datasets only) |
+| 2026-11-01 | Band occlusion by line removal, on the raw and the envelope-order axes; physics probe on CWRU | Zeroing a band feeds the encoder an input it never saw; bearing lines live in the envelope |
+| 2026-11-01 | MATWI's context counts as informative | Its 8 cutting conditions predict the wear class above the majority (+0.18 [0.05, 0.33]) |
 
 ## Week 1, continued (2026-10-26): data layer, EDA, CI
 
@@ -917,3 +921,238 @@ transfer (Nonastreda ↔ MATWI).
 | Real-data acceptance | MATWI inventory and labels, crops, previous-cut photos only, 11,043 windows; Nonastreda still 378 passes (147 / 118 / 113) with OmniFuser's current `load_nonastreda` |
 | CPU | `pdmfm.resources` before every heavy job; threads capped by it (1-2 here) while another process held 3 cores; no job ran on a saturated machine |
 | Not done here | CI in fresh 3.11 and 3.12 environments (`run_local_ci.sh`) was not rerun this pass; GitHub CI on `b2b7d4d` is yours to check (step 1). Perceiver and MBT in the Gate-2 search, and 3 seeds on MATWI, are on Ruche |
+
+## Week 7 (2026-11-01): report statistics, baselines, leakage checks, anomaly detection, band occlusion and the physics score
+
+Your request: build what needs nothing from Ruche (the report statistics, the missing
+baselines and leakage checks, anomaly detection on the cached features, band occlusion with
+the physics score); verify and test it; update the docs and the runbook; re-audit the
+pipeline end to end; document every improvement found and how it would help.
+
+### What was built
+
+| Module | What it does | Plan stage |
+| --- | --- | --- |
+| `pdmfm/report.py` | Methods compared on the bags they share (Plan B, Gate-2 test runs, baselines, RUL): pooled estimate with a 95 % interval from resampling test units (seeds averaged per replicate), the unit average, the paired difference on the same draws, units better, a two-sided Wilcoxon signed-rank test over units, Holm per table. Built from per-unit sufficient statistics (confusion matrices; squared-error sums), so 2,000 replicates take seconds | 12 |
+| `pdmfm/baselines.py` | Sensor-only baselines on Plan B's folds and output layout: gradient boosting on handcrafted features (`stats` arms, relative levels, slow channels, defect-line prominences for bearings), linear probes on any cached encoder, and PatchTST trained from scratch on the T-arm segments (GPU). Hyperparameters or the epoch chosen on inner-validation units | Baselines of every table |
+| `pdmfm/leakage.py` | The context-text check (a lookup per context sentence against the majority or training mean, on the outer folds' test bags) and the dataset-identity probe (which source dataset, from features averaged over channels; grouped 5-fold by unit) | Automatic leakage checks |
+| `pdmfm/anomaly.py` | Healthy-only scores on cached features (cosine kNN, RMS 3σ, isolation forest); the window protocol (k_h ∈ {10, 50}, 5 draws; AUROC, AUPRC, false alarms at 95 % detection) and the XJTU-SY onset protocol (alarm after 3 exceedances; AUROC, alarm minus FPT, false alarms before the FPT). KAIST and Paderborn real damage refused before stage 8 | 10 |
+| `pdmfm/explain.py` | Band occlusion by line removal on two axes (raw Hz; envelope orders through the E-arm input), the physics alignment score, the weight-randomization test and deletion curves; run on the CWRU Gate-1 probe | 11 (part) |
+| `pdmfm/arms.py` | `window_input`: arm inputs from any raw windows (stored or edited); `arm_input` now calls it | — |
+| `slurm/status.sh` | `== Baselines` section (results per run, physics checks) | — |
+
+Fixed on the way:
+
+- the PHM 2012 score's overflow warning (both branches of `np.where` are evaluated);
+- RUL summaries were titled "Plan B" (`planb.summarize` takes a title now);
+- four checkpoint tests (Mantis, AST, DINOv2, Qwen3) skipped only when the weights were
+  missing, not when their library was: a fresh environment that inherits `HF_HOME` failed
+  them. They now skip on a missing library too, as the MOMENT test did;
+- the fresh environments' pandas stubs flagged 23 `float(series.median())`-style calls in
+  the new modules that the development environment accepted; they now go through NumPy.
+
+### Band occlusion and the physics score (CWRU, 82 correct faulty 3 hp windows)
+
+The probe is fit on 0-2 hp from the cached features and evaluated online (raw window → arms →
+encoder → classifier); online and cached features give the same prediction on every window.
+
+| Probe (both 100 % accurate on 3 hp) | Axis | PAS median (share > 1) | Randomized PAS | p (PAS > randomized) | Deletion area: attribution / random |
+| --- | --- | --- | --- | --- | --- |
+| Mantis F + E | envelope orders | 0.96 (0.46) | 1.07 | 0.95 | 0.41 / 0.54 (p < 1e-14) |
+| Mantis F + E | raw Hz | 0.71 (0.27) | 0.53 | 6e-4 | 0.29 / 0.52 |
+| handcrafted F + E | envelope orders | 1.17 (0.59) | 0.69 | 1e-6 | 0.55 / 0.63 |
+| handcrafted F + E | raw Hz | 1.03 (0.51) | 0.56 | 1e-4 | 0.24 / 0.49 |
+
+By fault, on the envelope axis: handcrafted outer race 1.69, inner race 1.29, ball 0.31;
+Mantis outer race 1.01, inner race 1.13, ball 0.49.
+
+- Both attributions are faithful to their models (the deletion test passes clearly), and
+  both models are perfect on the held-out load. Only the handcrafted probe relies on the
+  defect lines; the Mantis probe does not (its PAS is no better than its randomized copy).
+  By the plan's rule, a Mantis-based explanation card would not show the physics line on
+  CWRU. CWRU's perfect accuracy therefore does not show physical understanding: each fault
+  size is one specimen, and the model can use other spectral content of that specimen.
+- Ball faults score below 1 for both. Smith and Randall's benchmark study of the CWRU data
+  (Mechanical Systems and Signal Processing, 2015) found most ball-fault records not
+  diagnosable by envelope analysis: their BSF lines are weak or absent.
+- The raw-Hz axis is the weaker physics check for bearings (the defect lines live in the
+  envelope); it is kept for milling's tooth-passing line (PHM 2010) and as a comparison.
+- The physical bands differ by fault (order axis: inner race 27 of 64 bands with the BPFI ±
+  1x sidebands, outer race 13, ball 10; raw Hz: 10, 6 and 5), so the largest possible PAS
+  differs by fault; compare models fault by fault.
+
+### Anomaly detection from healthy data only
+
+CWRU (window protocol, k_h = 10, 5 draws): every score separates healthy from faulty
+perfectly (AUROC 1.000 ± 0.000, no false alarms at 95 % detection). k_h = 50 is skipped: CWRU
+has 31 healthy windows. CWRU cannot rank the scores; KAIST and Paderborn real damage will
+(stage 8).
+
+XJTU-SY (onset protocol, support = each bearing's first 10 snapshots, 15 bearings):
+
+| Score | AUROC post- vs pre-FPT (median / mean) | Bearings alarmed | Alarm − FPT (median, snapshots) | Pre-FPT snapshots above threshold |
+| --- | --- | --- | --- | --- |
+| rms | 1.000 / 0.974 | 15 | 0 | 0.11 |
+| knn: handcrafted F + E | 0.996 / 0.978 | 15 | −21 | 0.59 |
+| knn: Mantis F | 0.985 / 0.960 | 15 | −44 | 0.61 |
+| knn: Mantis F + E | 0.975 / 0.942 | 15 | −8 | 0.42 |
+| isolation forest | 0.931 / 0.913 | 13 | −15 | 0.34 |
+| knn: Mantis E | 0.899 / 0.873 | 15 | +9 | 0.16 |
+
+- RMS matches the labels because the labels are an RMS rule (10 exceedances); the other scores
+  alarm earlier with many pre-FPT exceedances. Whether that is early degradation or drift of
+  the first minutes (run-in, temperature) cannot be told from these labels (improvement 5).
+- **A design flaw found and fixed before any result was used:** the first kNN score centred
+  and scaled the features on the 10-window support before the cosine distance; that made
+  every vector nearly orthogonal (median AUROC 0.48-0.78, almost no alarms). Compared on the
+  source datasets only: cosine on the features as they are (the plan's score) 0.90-0.996, a
+  support-scaled Euclidean distance about the same. The plan's score was kept.
+
+### Baselines and paired reports (pooled out-of-fold bags; units resampled; Wilcoxon over units, Holm)
+
+Nonastreda (10 tools; Plan B = `exp-base`, Mantis F + photos, 3 seeds; baselines sensor-only):
+
+| Method | macro-F1 [95 %] | Difference to Plan B [95 %] | Tools better | Holm p | Wear RMSE (µm) |
+| --- | --- | --- | --- | --- | --- |
+| Plan B | 0.802 [0.744, 0.851] | — | — | — | 25.8 |
+| persistence | 0.779 [0.703, 0.847] | −0.023 [−0.066, +0.038] | 2/10 | 0.28 | 22.7 |
+| schedule | 0.605 [0.510, 0.690] | −0.197 [−0.299, −0.103] | 2/10 | 0.020 | 32.6 |
+| Mantis F probe | 0.590 [0.497, 0.663] | −0.211 [−0.321, −0.120] | 0/10 | 0.010 | 32.4 |
+| gradient boosting | 0.562 [0.466, 0.649] | −0.239 [−0.366, −0.138] | 0/10 | 0.010 | 34.6 |
+| majority | 0.203 | −0.598 | 0/10 | 0.010 | 46.0 (mean) |
+
+XJTU-SY (15 bearings; RMSE of normalized RUL; Plan B Mantis F + E):
+
+| Method | RMSE [95 %] | Unit average | After FPT | Bearings better | Holm p |
+| --- | --- | --- | --- | --- | --- |
+| Plan B | 0.183 [0.097, 0.255] | 0.207 | 0.315 | — | — |
+| gradient boosting (with defect lines) | 0.183 [0.097, 0.257] | 0.193 | 0.315 | 9/15 | 0.61 |
+| RUL GRU, history 1 | 0.208 | 0.199 | 0.371 | 9/15 | 1 |
+| RUL GRU, history 10 | 0.228 | 0.196 | 0.409 | 9/15 | 1 |
+| Mantis F + E probe | 0.234 | 0.229 | 0.254 | 5/15 | 0.83 |
+| training mean | 0.295 | 0.332 | 0.478 | 2/15 | 0.003 |
+| schedule | 0.312 | — | 0.499 | 1/15 | 0.004 |
+
+MATWI (17 tools; Plan B handcrafted T + F + photos, seed 0):
+
+| Method | macro-F1 [95 %] | Holm p vs Plan B | Wear RMSE (µm) |
+| --- | --- | --- | --- |
+| Plan B | 0.443 [0.315, 0.550] | — | 67.6 |
+| gradient boosting | 0.462 [0.334, 0.571] | 0.59 | 78.9 |
+| handcrafted T + F probe | 0.457 [0.309, 0.579] | 0.59 | 96.4 |
+| persistence | 0.925 [0.878, 0.957] | < 0.001 | 34.1 |
+| schedule | 0.334 [0.224, 0.427] | 0.59 | 81.0 |
+
+- Nonastreda: Plan B (force + photos) beats every sensor-only baseline on every test tool
+  and the schedule baseline, and ties persistence. The photo of the previous pass carries
+  what persistence carries.
+- XJTU-SY: gradient boosting on handcrafted features with defect-line prominences ties Plan B
+  (pooled) and is better on 9 of 15 bearings; nothing differs significantly. The pooled RMSE
+  weighs long-lived bearings (Bearing3_1 alone is 28 % of the snapshots): per bearing, the
+  RUL GRU (0.196-0.199) and gradient boosting (0.193) are slightly better than Plan B
+  (0.207). The week-6 verdict (Plan B stays for RUL) stands, since no difference is
+  significant either way; the unit average is now reported next to the pooled value.
+- MATWI: every sensor model is at about 0.45; nothing beats persistence. Cross-tool
+  generalization remains the limit (week 6).
+- PatchTST from scratch, a 1-fold CPU check (Nonastreda fold 1, seed 0, 8 epochs of about
+  70 s): the loss falls from 1.54 to 0.82, the validation score peaks at epoch 7 (0.614),
+  and the test fold scores macro-F1 0.70 and wear RMSE 24.3 µm. On the same fold and seed:
+  Plan B 0.71 / 26.9, gradient boosting 0.49 / 29.6, Mantis F probe 0.50 / 19.5. One fold
+  shows only that it learns; the 5 folds × 3 seeds run on a Ruche GPU (runbook §16.8). If it
+  holds, a sensor model trained from scratch on raw force segments matches the frozen-encoder
+  Plan B on Nonastreda, which bears on Gate 1's own-PatchTST arm and on pretraining.
+
+### Leakage checks
+
+Context alone (lookup per sentence, outer-fold test bags):
+
+| Dataset | Contexts | Classes: context / majority (difference [95 %]) | Target RMSE: context / training mean | Verdict |
+| --- | --- | --- | --- | --- |
+| Nonastreda | 1 | 0.203 / 0.203 (0) | 46.0 / 46.0 | at chance |
+| MATWI | 8 | 0.371 / 0.187 (+0.184 [+0.049, +0.325]) | 77.4 / 81.0 (−3.6 [−13.5, +4.0]) | **informative** |
+| XJTU-SY | 3 | — | 0.294 / 0.295 | at chance |
+
+MATWI's 8 cutting conditions (two materials) shift its wear-class distribution: the context
+names no state but carries a prior. Context is not a Plan B input, so no result changes; the
+rule for every later model that reads it is in the plan's amendments.
+
+Which source dataset (features averaged over channels; 5-fold grouped by unit; Nonastreda,
+MATWI, XJTU-SY, CWRU, chance 0.25; Mantis without MATWI, chance 0.33):
+
+| Feature | Balanced accuracy |
+| --- | --- |
+| Mantis F | 1.000 |
+| handcrafted F | 0.978 |
+| level descriptors, absolute | 0.772 |
+| level descriptors, relative to the healthy baseline | 0.484 |
+
+Frozen features identify the machine perfectly; the baseline-relative levels remove much of
+it (improvement 2). The contrastive negatives of the planned pretraining come from the same
+dataset for this reason, and this table is the reference the pretrained representation is
+compared with.
+
+### Re-audit of the pipeline, end to end
+
+| Stage | Checked | Finding |
+| --- | --- | --- |
+| Splits | Every new module uses the outer folds of `protocols` and asserts unit-disjoint splits; tests spy on what the selection reads | No test unit enters any selection; the baselines choose on the inner-validation units only |
+| Selection | Plan B (epoch, temperature, interval), Gate 2 (inner folds), tune, baselines (grid or epoch), anomaly (the kNN variant chosen on source datasets only) | Clean |
+| Targets | KAIST and Paderborn real damage refused by `anomaly` and `leakage` before stage 8; the physics probe reads CWRU only | Clean |
+| Statistics | The plan's 15 fold × seed pairs were not independent; units are now the pairs; seeds averaged | Pooled and unit-averaged values can disagree (XJTU-SY); both are reported |
+| Evidence strength | 10-17 units per dataset; Wilcoxon over 10 units cannot go below p = 0.002 | "No significant difference" is reported as an absence of evidence with its interval |
+| Physics | The Gate-1-style Mantis probe classifies CWRU perfectly without using defect lines | CWRU accuracy is weak evidence of understanding (improvement 1) |
+| Leakage | MATWI context informative; machine identity in every frozen feature | Rules added to the plan; reference numbers for pretraining |
+| Labels | XJTU-SY's FPT is an RMS rule; Nonastreda's visual labels (week 6) | Onset results read against RMS; label-free onset metric proposed (improvement 5) |
+
+### Improvements found (documented, not built; each needs your go-ahead or its stage)
+
+1. **Defect-line tokens in the vibration expert.** The handcrafted defect-line prominences (4
+   lines × 3 harmonics per vibration channel, already computed by `pdmfm.baselines`) as extra
+   level-like tokens. Why: gradient boosting with them ties Plan B on XJTU-SY, and the Mantis
+   features do not localize defect lines (PAS ≈ randomized). How it helps: a physics-grounded
+   input whose meaning transfers across bearings by construction (orders from each bearing's
+   geometry), a likely PAS above 1, and the explanation cards' physics line. Cost: about one
+   day plus a Plan B rerun; decided on inner-validation units like every option.
+2. **Baseline-relative embeddings.** Subtract each unit's healthy-baseline mean embedding from
+   its sensor tokens, as the level tokens already do for levels (dataset identity 0.77 →
+   0.48) and the RUL model does for snapshots. How it helps: less machine identity in the
+   representation, so transfer (KAIST, Paderborn real damage) and pretraining cannot lean on
+   it. Check: the dataset-identity probe on the relative embeddings, then inner validation.
+   Caveat: MATWI tools that start worn have no healthy first cut.
+3. **Predict the change, not the state, on milling.** Persistence is the strongest milling
+   baseline (Nonastreda 0.78, MATWI 0.93); Plan B ties it on Nonastreda through the previous
+   pass's photo. A head that predicts the wear increment since the previous pass from the
+   sensors, added to the photo's estimate of the previous wear, splits the task into what the
+   photo knows and what the cut adds. How it helps: the "accuracy where the class changes"
+   metric (where persistence fails) is the target. Cost: one or two days.
+4. **One headline test across datasets.** Units of all datasets in one stratified test (e.g.
+   Van Elteren's stratified Wilcoxon) for the paper's main claims, instead of 10-17 units per
+   table. How it helps: per-dataset tests are weak by size; a stratified test keeps each
+   dataset's units paired within it. Cost: hours in `pdmfm.report`.
+5. **A label-free onset metric and an adaptive healthy reference.** For XJTU-SY: the lead time
+   before failure at the first sustained alarm, with false alarms counted in the first half of
+   life, instead of the RMS-defined FPT; and a support that grows while no alarm is raised
+   (the first 10 minutes may not cover the healthy regime). How it helps: removes the
+   circularity of the RMS labels. Cost: hours in `pdmfm.anomaly`.
+6. **Give CWRU less weight as evidence.** It saturates anomaly detection and is classified
+   perfectly without its physics. The decisive evidence is Paderborn (artificial → real
+   damage) and KAIST; CWRU stays in pretraining and as one Gate-1 task, which is decided by
+   rank, so Gate 1 is not affected.
+7. **Healthy support from other recordings in the anomaly targets.** KAIST's 4 Nm healthy
+   data is one recording (117 windows), so the window protocol as written draws the support
+   and the healthy test windows from the same recording, and its false-alarm rate is
+   optimistic (no session or load change; CWRU likewise). At stage 8, also report the support
+   drawn from the 0 and 2 Nm healthy recordings (as the KAIST classification target does),
+   and for Paderborn from other healthy bearings than the tested ones. How it helps: false
+   alarms measured across sessions, as a deployment meets them. Cost: hours.
+
+### Verification of this pass
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | **479 passed, 27 skipped, 0 failed** (checkpoint tests run with the Hugging Face cache; skipped: 18 Linux-only SLURM, 5 network, 4 Paderborn and PHM 2010 acceptance) |
+| Fresh environments (`run_local_ci.sh`, as CI: no data, no optional encoders) | **450 passed, 52 skipped** on Python 3.11 and 3.12, coverage 87 %, pyright **0 errors** (after the two fixes above, which only the fresh environments revealed) |
+| ruff format and check, pyright `pdmfm`, pre-commit on the changed files | Clean; pyright **0 errors** |
+| New tests | `test_explain` (14: line removal, physics masks, PAS, a BPFO-line model on both axes, randomized weights near chance, deletion order, online features equal the cache, the run), `test_anomaly` (13: score values, metrics, alarms, the target lock, support never in the test set, a spectral fault RMS misses, onset near the FPT), `test_report` (9: Holm, Wilcoxon, sufficient statistics equal the metrics, a better method found and a copy not, seeds averaged, alignment and label check, RUL after-FPT table, command line), `test_baselines` (10: line prominence, feature blocks, Plan B's layout for both tasks, resume, RUL probe beats the mean, per-fold Paderborn baseline, selection never reads test units, PatchTST from scratch, refusals, the report across runs), `test_leakage` (6: one context carries nothing, a context naming the class is flagged, regression-only datasets, the identity probe and target refusal, channel averaging, the run); RUL summary title; status script (Linux) |
+| Real-data runs (laptop) | Physics check on CWRU (Mantis F + E, handcrafted F + E; 82 windows each); anomaly on CWRU and XJTU-SY; gradient boosting on Nonastreda, MATWI, XJTU-SY; probes on the same three; a 1-fold PatchTST CPU check; leakage checks; three paired reports (`runs/report/*-week7/`) |
+| CPU | `pdmfm.resources` before every heavy job; threads capped at 2-4; RAM free 2.5-4 GB throughout (desktop applications), every job below 2 GB |
