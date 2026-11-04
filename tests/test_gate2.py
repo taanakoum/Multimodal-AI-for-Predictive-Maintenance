@@ -159,6 +159,28 @@ def test_a_clear_score_lead_is_not_overruled_by_robustness():
     assert report["model"] == "concat"
 
 
+def test_each_outer_fold_decides_on_its_own_inner_splits():
+    """A fusion candidate that wins only in outer fold 1 (its 4 inner splits): the pooled rule
+    keeps Plan B (4 wins of 20), fold 1's own rule picks the candidate (4 of 4), the other
+    folds keep Plan B. Fold k's own decision never reads fold k's test units."""
+    fusion = [0.70] * 4 + [0.59] * 16
+    t = table({"planb": steady(0.60), "c2f": fusion})
+    pooled = gate2.decide(t, CONFIGS)
+    assert pooled["model"] == "planb"
+    per_fold = {
+        k: gate2.per_fold_entry(gate2.decide(t[t["outer"] == k], CONFIGS), CONFIGS)
+        for k in range(1, 6)
+    }
+    assert per_fold[1]["model"] == "c2f" and {per_fold[k]["model"] for k in (2, 3, 4, 5)} == {
+        "planb"
+    }
+    assert per_fold[1]["overrides"] == {
+        "fusion": "c2f", "lr": 3e-4, "schedule": "cosine", "input_dropout": 0.3,
+        "modality_dropout": 0.0,
+    }  # fmt: skip
+    assert per_fold[2]["overrides"]["fusion"] == "late" and per_fold[2]["overrides"]["lr"] == 1e-3
+
+
 def test_regression_only_datasets_rank_by_interval_coverage():
     t = table({"planb": steady(0.4), "concat": steady(0.5)}).drop(columns="ece")
     t["coverage_error"] = 0.05
@@ -225,6 +247,8 @@ def test_search_scores_inner_folds_only_and_resumes(root, monkeypatch):
     assert results["score"].between(-5, 1).all() and results["robustness"].notna().all()
     decision = json.loads((out / "decision.json").read_text(encoding="utf-8"))
     assert decision["model"] in ("planb", "concat") and decision["model"] == report["model"]
+    assert set(decision["per_fold"]) == {"1"} and decision["per_fold_agreement"] in (0.0, 1.0)
+    assert decision["per_fold"]["1"]["model"] in ("planb", "concat")
     assert "## " not in (out / "summary.md").read_text(encoding="utf-8")[:2]
     assert "| concat |" in (out / "summary.md").read_text(encoding="utf-8")
     gate2.search("nonastreda", "stats", ("T", "F"), "search", TINY, **kwargs)

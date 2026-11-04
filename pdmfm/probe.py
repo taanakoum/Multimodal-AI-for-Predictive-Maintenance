@@ -16,8 +16,14 @@ inner-validation units):
 * ``nonastreda``: 3 wear classes from force only, by tool; balanced accuracy.
 
 Rule: rank the candidates per task; the lowest mean rank wins; a tie goes to the cheaper
-encoder. All candidates of a run are scored on the same rows (the windows every one of them
-has cached), so a 10 % subsample of one candidate restricts the whole comparison to it.
+encoder. The rule is also applied per outer fold, on that fold's validation splits only (and
+CWRU's, which no fold tests): fold k's validation units are fold k+1's test units, so the
+pooled winner is informed by test units of other folds. ``per_fold_winner`` and
+``per_fold_agreement`` in ``report.json`` say whether the choice is stable; if a fold's own
+winner differs, its nested in-domain estimate needs that fold's encoder (PROJECT_LOG week 7).
+
+All candidates of a run are scored on the same rows (the windows every one of them has
+cached), so a 10 % subsample of one candidate restricts the whole comparison to it.
 Tasks whose windows or features are missing are skipped and reported. Arms a dataset lacks
 are dropped from a candidate (``T+E`` is ``T`` on Nonastreda, which has no E arm); a
 candidate left with no arm gets the worst rank on that task, so it cannot win by skipping
@@ -283,6 +289,7 @@ def run(
         summary[summary["is_candidate"] & summary["mean_rank"].notna()] if len(summary) else summary
     )
     winner = ranked.iloc[0]["candidate"] if len(ranked) else None
+    fold_winners = per_fold_winners(results) if len(results) else {}
     gaps = [k for k, v in skipped.items() if not v.startswith("reference dropped")]
     report = {
         "run_id": run_id,
@@ -292,6 +299,10 @@ def run(
         "skipped": skipped,
         "complete": not gaps,  # every task and fold scored for every candidate
         "winner": winner,
+        "per_fold_winner": fold_winners,
+        "per_fold_agreement": (
+            float(np.mean([w == winner for w in fold_winners.values()])) if fold_winners else None
+        ),
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     results.to_csv(out / "results.csv", index=False)
@@ -300,6 +311,31 @@ def run(
     (out / "summary.md").write_text(_markdown(report, summary), encoding="utf-8")
     log(f"[gate1] winner: {winner}  ({out})")
     return report
+
+
+def _fold_of(split: str) -> int | None:
+    """The outer fold of a split name (``nonastreda-fold3`` -> 3); None for CWRU's split."""
+    head, _, number = split.rpartition("fold")
+    return int(number) if head and number.isdigit() else None
+
+
+def per_fold_winners(results: pd.DataFrame) -> dict[str, str]:
+    """Outer fold -> the candidate with the lowest mean rank over the tasks, using only that
+    fold's validation splits (CWRU's single split counts in every fold)."""
+    folds = sorted({f for f in map(_fold_of, results["split"].astype(str)) if f is not None})
+    winners = {}
+    for fold in folds:
+        keep = [
+            _fold_of(s) in (fold, None) for s in results["split"].astype(str)
+        ]  # this fold's splits and CWRU's
+        part = results.loc[np.asarray(keep) & results["is_candidate"].astype(bool).to_numpy()]
+        if not len(part):
+            continue
+        summary = summarize(pd.DataFrame(part))
+        ranked = summary[summary["is_candidate"] & summary["mean_rank"].notna()]
+        if len(ranked):
+            winners[str(fold)] = str(ranked.iloc[0]["candidate"])
+    return winners
 
 
 def summarize(results: pd.DataFrame) -> pd.DataFrame:
@@ -348,6 +384,13 @@ def _number(value, digits: int) -> str:
 
 def _markdown(report: dict, summary: pd.DataFrame) -> str:
     lines = [f"# Gate 1 probe: {report['run_id']}", "", f"Winner: **{report['winner']}**", ""]
+    if report.get("per_fold_winner"):
+        per_fold = ", ".join(f"fold {k}: {v}" for k, v in report["per_fold_winner"].items())
+        lines += [
+            f"Per outer fold (its own validation splits only): {per_fold}; the same as the "
+            f"pooled winner in {report['per_fold_agreement']:.0%} of folds.",
+            "",
+        ]
     if not report["complete"]:
         lines += [
             "**Incomplete:** some tasks or folds were skipped (listed at the end); the ranking "

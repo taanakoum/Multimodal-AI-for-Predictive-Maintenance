@@ -11,7 +11,7 @@ import pytest
 import torch
 from synthetic import build_planb_root
 
-from pdmfm import losses, planb, protocols
+from pdmfm import losses, planb, protocols, sensors
 from pdmfm.model.fusion import FUSIONS, STAGES, FusionModel, build_model
 from pdmfm.model.inputs import Modality, TaskInputs, assemble
 from pdmfm.model.late import LateEvidential
@@ -172,6 +172,7 @@ def test_fusion_stages_fit_the_parameter_budget():
     inputs = TaskInputs(
         "x", pd.DataFrame(index=range(n)), modalities, ["a", "b", "c"],
         np.eye(3, 1024, dtype=np.float32), np.zeros(n, int), np.zeros(n),
+        channels=sensors.generic(3),
     )  # fmt: skip
     for name in STAGES:
         model = FusionModel(inputs, name, d=256)
@@ -273,9 +274,11 @@ def test_each_candidate_learns_the_synthetic_wear(root, fusion):
     each; the second cut's 70 +- 3 um straddles the 71 um class edge, so some labels are
     noisy). With the search recipe (input dropout 0.3, cosine schedule) every candidate must
     beat the majority class clearly on the held-out tools and halve the training mean's wear
-    error. The fused head's own estimate must learn too (below 0.6 of that error; it lags
-    the experts on 50 training cuts, and MoNIG weights it by its evidence: seeds 0-2 gave
-    0.19-0.48 of the training mean's error)."""
+    error. The fused head's own estimate must learn too: the median over seeds 0-2 below 0.6
+    of that error. On 50 training cuts it is bimodal by seed (C2F: 0.18-0.31 or about 0.6, with
+    the positional channel embedding as with the semantic one: 2 and 5 of 10 seeds near 0.6,
+    Fisher p = 0.35; PROJECT_LOG week 7), so one seed decides nothing; the combined estimate
+    is stable (0.17-0.27 on all 20 runs)."""
     inputs = load(root, "matwi")
     split = protocols.matwi_fold(inputs.manifest, 1)
     cfg = TrainConfig(
@@ -283,15 +286,18 @@ def test_each_candidate_learns_the_synthetic_wear(root, fusion):
         schedule="cosine",
     )  # fmt: skip
     train, val, test = (np.flatnonzero(m) for m in (split.train, split.val, split.test))
-    fitted = fit(inputs, train, val, cfg, seed=0, log=quiet)
-    pred = predict(fitted.model, inputs, test, cfg)
-    result = planb.evaluate(inputs, test, pred, fitted.y_mean, fitted.y_std, None)
     reference = planb.baselines(inputs, train, test)
     assert reference["majority"]["balanced_accuracy"] == pytest.approx(1 / 3)
-    assert result["combined"]["bag"]["balanced_accuracy"] >= 0.6
     limit = reference["train_mean"]["rmse"] / 2
-    assert result["regression"]["combined"]["bag"]["rmse"] < limit
-    assert result["regression"]["only_fused"]["bag"]["rmse"] < 0.6 * reference["train_mean"]["rmse"]
+    fused = []
+    for seed in range(3):
+        fitted = fit(inputs, train, val, cfg, seed=seed, log=quiet)
+        pred = predict(fitted.model, inputs, test, cfg)
+        result = planb.evaluate(inputs, test, pred, fitted.y_mean, fitted.y_std, None)
+        assert result["combined"]["bag"]["balanced_accuracy"] >= 0.6
+        assert result["regression"]["combined"]["bag"]["rmse"] < limit
+        fused.append(result["regression"]["only_fused"]["bag"]["rmse"])
+    assert np.median(fused) < 0.6 * reference["train_mean"]["rmse"]
 
 
 # ----------------------------------------------------------------------------- Plan B runs

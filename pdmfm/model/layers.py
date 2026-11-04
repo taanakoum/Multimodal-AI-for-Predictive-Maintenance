@@ -1,11 +1,16 @@
 """Modality encoders and evidential heads (plan, "Model architecture").
 
+* :class:`ChannelEmbedding`: a channel's vector from its physical description
+  (:mod:`pdmfm.sensors`: family, axis, location, site, sampling rate and window length), so
+  the same kind of sensor gets the same vector in every dataset.
 * :class:`ModalityEncoder`: adapter (LayerNorm then Linear) from the encoder's width to
   d = 256 (an MLP 2 -> 64 -> d for descriptor tokens such as slow channels, where a
-  LayerNorm over two numbers would erase them), plus token-role and channel embeddings, a
-  level MLP (F -> 64 -> d for F level features) for level tokens and an age embedding for
-  photos; attention pooling with one learned query gives the modality summary z_m from that
-  modality's tokens only, so per-modality opinions stay independent.
+  LayerNorm over two numbers would erase them), plus token-role, channel and position
+  embeddings (the position of a token within its channel and role: a T token's time slot, a
+  photo token's grid cell), a level MLP (F -> 64 -> d for F level features) for level tokens
+  and an age embedding for photos; attention pooling with one learned query gives the
+  modality summary z_m from that modality's tokens only, so per-modality opinions stay
+  independent.
 * :class:`PrototypeEvidentialHead`: text-anchored classes. q = normalize(W_q z); logits =
   s q P^T + b over the frozen Qwen prototypes P of the label space; evidence = softplus.
 * :class:`NIGHead`: MLP d -> 128 -> 4 with the NIG constraints.
@@ -18,8 +23,37 @@ import math
 import torch
 from torch import nn
 
+from pdmfm import sensors
 from pdmfm.losses import nig_parameters
-from pdmfm.model.inputs import ROLE, ROLES
+from pdmfm.model.inputs import MAX_POSITIONS, ROLE, ROLES
+
+
+class ChannelEmbedding(nn.Module):
+    """(C, d) channel vectors from descriptions: family, axis, location and site embeddings,
+    averaged as sum / 2 (four unit-variance parts keep the unit variance of the single
+    positional embedding they replace, so content and metadata keep their balance at
+    initialization), plus a linear map of the scale (log10 rate in kHz, log10 window in
+    seconds), started at zero. It holds no per-dataset table: any dataset's ``codes`` and
+    ``scale`` (:func:`pdmfm.sensors.table`) can be embedded by the same parameters."""
+
+    def __init__(self, d: int) -> None:
+        super().__init__()
+        self.family = nn.Embedding(len(sensors.FAMILIES), d)
+        self.axis = nn.Embedding(len(sensors.AXES), d)
+        self.location = nn.Embedding(len(sensors.LOCATIONS), d)
+        self.site = nn.Embedding(sensors.MAX_SITES, d)
+        self.scale = nn.Linear(2, d)
+        nn.init.zeros_(self.scale.weight)
+        nn.init.zeros_(self.scale.bias)
+
+    def forward(self, codes: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        parts = (
+            self.family(codes[:, 0])
+            + self.axis(codes[:, 1])
+            + self.location(codes[:, 2])
+            + self.site(codes[:, 3])
+        )
+        return parts / 2 + self.scale(scale)
 
 
 class ModalityEncoder(nn.Module):
@@ -27,7 +61,6 @@ class ModalityEncoder(nn.Module):
         self,
         d_in: int,
         d: int = 256,
-        n_channels: int = 16,
         levels: bool = False,
         age: bool = False,
         heads: int = 4,
@@ -41,7 +74,9 @@ class ModalityEncoder(nn.Module):
         else:
             self.adapter = nn.Sequential(nn.LayerNorm(d_in), nn.Linear(d_in, d))
         self.role = nn.Embedding(len(ROLES), d)
-        self.channel = nn.Embedding(n_channels, d)
+        self.channel = ChannelEmbedding(d)
+        self.position = nn.Embedding(MAX_POSITIONS, d)
+        nn.init.normal_(self.position.weight, std=0.02)  # new information: starts small (ViT)
         self.level = (
             nn.Sequential(nn.Linear(level_dim, 64), nn.GELU(), nn.Linear(64, d)) if levels else None
         )
@@ -55,14 +90,20 @@ class ModalityEncoder(nn.Module):
         self,
         tokens: torch.Tensor,  # (B, T, d_in)
         roles: torch.Tensor,  # (T,)
-        channels: torch.Tensor,  # (T,)
+        channels: torch.Tensor,  # (T,) index into the channel table
+        channel_codes: torch.Tensor,  # (C, 4) family, axis, location, site
+        channel_scale: torch.Tensor,  # (C, 2) log10 rate (kHz), log10 window (s)
+        positions: torch.Tensor | None = None,  # (T,) slot within the channel and role
         token_present: torch.Tensor | None = None,  # (B, T) bool
         levels: torch.Tensor | None = None,  # (B, L, level_dim)
         level_channels: torch.Tensor | None = None,  # (L,)
         age: torch.Tensor | None = None,  # (B, T) passes since capture
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """(token embeddings (B, T [+ L], d), token present (B, T [+ L]) bool)."""
-        x = self.adapter(tokens) + self.role(roles) + self.channel(channels)
+        table = self.channel(channel_codes, channel_scale)  # (C, d)
+        if positions is None:
+            positions = torch.zeros_like(roles)
+        x = self.adapter(tokens) + self.role(roles) + table[channels] + self.position(positions)
         if self.age is not None and age is not None:
             x = x + self.age(torch.log1p(age.clamp_min(0)).unsqueeze(-1))
         present = (
@@ -72,7 +113,8 @@ class ModalityEncoder(nn.Module):
         )
         if self.level is not None and levels is not None and level_channels is not None:
             level_role = torch.full_like(level_channels, ROLE["level"])
-            lv = self.level(levels) + self.role(level_role) + self.channel(level_channels)
+            lv = self.level(levels) + self.role(level_role) + table[level_channels]
+            lv = lv + self.position(torch.zeros_like(level_channels))
             x = torch.cat([x, lv], 1)
             present = torch.cat([present, present.new_ones(lv.shape[:2])], 1)
         return x, present

@@ -18,7 +18,10 @@ beside it (written atomically; a rerun skips finished folds and seeds), then
 ``summary.csv`` and ``summary.md``. Paired tests across fold x seed come later (report stage).
 
 ``--fusion`` trains a Gate-2 candidate (:mod:`pdmfm.model.fusion`) instead; its fused head
-is also scored alone (``only_fused``). Inputs are assembled once, or once per fold when they
+is also scored alone (``only_fused``). ``--per-fold FILE`` (a ``best.json`` of
+:mod:`pdmfm.tune` or a ``decision.json`` of :mod:`pdmfm.gate2`) applies each outer fold's own
+choice on top of the command-line settings: the nested estimate, in which no test unit
+helped choose the settings it is scored with. Inputs are assembled once, or once per fold when they
 depend on it: ``{fold}`` in the
 encoder name (``patchtst-fold{fold}``: fold k's own PatchTST) or a level baseline made of the
 fold's training units (Paderborn).
@@ -32,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -450,13 +454,16 @@ def run(
     without: tuple[str, ...] = (),
     levels: str = "relative",
     force_mean: bool = False,
+    per_fold: dict[int, dict] | None = None,
 ) -> Path:
+    """``per_fold`` maps an outer fold to TrainConfig overrides chosen on that fold's own
+    inner splits (:func:`load_per_fold`)."""
     if dataset not in FOLDS:
         raise ValueError(f"Plan B runs on the source datasets with outer folds: {sorted(FOLDS)}")
     out = (Path(out_root) if out_root else REPO_ROOT / "runs" / "planb") / run_id
     out.mkdir(parents=True, exist_ok=True)
     manifest = WindowStore.open(dataset, window_root).manifest
-    per_fold = "{fold}" in encoder or dataset in FOLD_BASELINE
+    inputs_per_fold = "{fold}" in encoder or dataset in FOLD_BASELINE
     options = {
         "photos": photos,
         "without": without,
@@ -469,11 +476,18 @@ def run(
     for fold in folds:
         split = FOLDS[dataset](manifest, fold)
         split.assert_unit_disjoint(manifest)
-        if prepared is None or per_fold:
+        if prepared is None or inputs_per_fold:
             train_units = sorted(split.units(manifest, "train"))
             encoder_k = encoder.replace("{fold}", str(fold))
             prepared = prepare_inputs(dataset, encoder_k, arm_list, cfg, train_units, options, log)
         inputs, settings, key, any_present = prepared
+        fold_cfg = cfg
+        if per_fold is not None:
+            if fold not in per_fold:
+                raise ValueError(f"--per-fold has no choice for fold {fold}")
+            fold_cfg = replace(cfg, **per_fold[fold])
+            settings = {**settings, "train": fold_cfg.as_dict(), "per_fold": True}
+            key = stable_hash(settings)[:12]
         labelled = any_present.copy()
         if inputs.y_class is not None:
             labelled &= inputs.y_class >= 0
@@ -491,21 +505,21 @@ def run(
                 raise ValueError(f"{path} holds a run with other settings; use another --run-id")
             sizes = f"train {len(train_rows)}, validation {len(val_rows)}, test {len(test_rows)}"
             log(f"[planb] fold {fold} seed {seed}: {sizes} windows")
-            fitted = fit(inputs, train_rows, val_rows, cfg, seed, log=log)
-            val_pred = predict(fitted.model, inputs, val_rows, cfg)
+            fitted = fit(inputs, train_rows, val_rows, fold_cfg, seed, log=log)
+            val_pred = predict(fitted.model, inputs, val_rows, fold_cfg)
             y_mean, y_std = fitted.y_mean, fitted.y_std
             temperature, interval = _calibrate(inputs, val_rows, val_pred, y_mean, y_std)
-            test_pred = predict(fitted.model, inputs, test_rows, cfg)
+            test_pred = predict(fitted.model, inputs, test_rows, fold_cfg)
             photo = inputs.modalities.get("photo")
             stale = (
                 {
-                    lag: predict(fitted.model, inputs, test_rows, cfg, photo_lag=lag)
+                    lag: predict(fitted.model, inputs, test_rows, fold_cfg, photo_lag=lag)
                     for lag in range(2, MAX_PHOTO_LAG + 1)
                 }
                 if photo is not None and photo.views is not None
                 else None
             )
-            train_pred = predict(fitted.model, inputs, train_rows, cfg)
+            train_pred = predict(fitted.model, inputs, train_rows, fold_cfg)
             trainable = sum(p.numel() for p in fitted.model.parameters() if p.requires_grad)
             result = {
                 "dataset": dataset,
@@ -526,7 +540,7 @@ def run(
                     y_mean,
                     y_std,
                     None,
-                    dropped=without_each(fitted.model, inputs, val_rows, cfg),
+                    dropped=without_each(fitted.model, inputs, val_rows, fold_cfg),
                 ),  # fmt: skip
                 "test": evaluate(
                     inputs,
@@ -537,7 +551,7 @@ def run(
                     temperature,
                     interval,
                     stale,
-                    without_each(fitted.model, inputs, test_rows, cfg),
+                    without_each(fitted.model, inputs, test_rows, fold_cfg),
                 ),  # fmt: skip
                 "train": _fit_summary(inputs, train_rows, train_pred, y_mean, y_std),
                 "baselines": baselines(inputs, train_rows, test_rows),
@@ -551,6 +565,23 @@ def run(
             np.savez_compressed(out / f"fold{fold}-seed{seed}.npz", rows=test_rows, **test_pred)
             write_json_atomic(path, result)
     summarize(out)
+    return out
+
+
+def load_per_fold(path: Path) -> dict[int, dict]:
+    """Outer fold -> TrainConfig overrides from a ``best.json`` (pdmfm.tune) or a
+    ``decision.json`` (pdmfm.gate2)."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "per_fold" not in data:
+        raise ValueError(f"{path} holds no per-fold choices (made before nested selection)")
+    allowed = set(TrainConfig.__dataclass_fields__)
+    out = {}
+    for fold, entry in data["per_fold"].items():
+        overrides = dict(entry["overrides"])
+        unknown = set(overrides) - allowed
+        if unknown:
+            raise ValueError(f"{path}: fold {fold} sets unknown options {sorted(unknown)}")
+        out[int(fold)] = overrides
     return out
 
 
@@ -885,6 +916,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--force-mean", action="store_true", help="add force channels' window mean (ablation)"
     )
+    parser.add_argument(
+        "--per-fold",
+        type=Path,
+        help="best.json (pdmfm.tune) or decision.json (pdmfm.gate2): each fold's own choice",
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", type=Path, help="results folder (default: runs/planb)")
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
@@ -924,6 +960,7 @@ def main(argv: list[str] | None = None) -> None:
         without=tuple(args.without),
         levels=args.levels,
         force_mean=args.force_mean,
+        per_fold=load_per_fold(args.per_fold) if args.per_fold else None,
     )
     print(f"[planb] done in {time.perf_counter() - started:.0f} s -> {out}")
 

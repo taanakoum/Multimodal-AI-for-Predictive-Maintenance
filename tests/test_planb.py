@@ -10,7 +10,7 @@ import pytest
 import torch
 from synthetic import build_planb_root
 
-from pdmfm import planb, protocols
+from pdmfm import planb, protocols, sensors
 from pdmfm.model.inputs import Modality, TaskInputs, assemble
 from pdmfm.model.late import LateEvidential
 from pdmfm.train import TrainConfig, _losses, bag_mean, batch, fit, predict, selection_score
@@ -135,6 +135,7 @@ def test_parameter_budget_at_full_size():
     inputs = TaskInputs(
         "x", pd.DataFrame(index=range(n)), modalities, ["a", "b", "c"],
         np.eye(3, 1024, dtype=np.float32), np.zeros(n, int), np.zeros(n),
+        channels=sensors.generic(3),
     )  # fmt: skip
     model = LateEvidential(inputs, d=256)
     assert sum(p.numel() for p in model.parameters()) <= 3_000_000
@@ -148,6 +149,12 @@ def test_level_channels_beyond_the_token_channels_get_embeddings():
     )  # fmt: skip
     inputs = TaskInputs("x", pd.DataFrame(index=range(n)), {"vibration": modality})
     inputs.y_reg = np.zeros(n)
+    with pytest.raises(ValueError, match="describe every channel"):
+        LateEvidential(inputs, d=8)
+    inputs.channels = sensors.generic(5)
+    with pytest.raises(ValueError, match="uses channel 5"):  # channel 5 has no description
+        LateEvidential(inputs, d=8)
+    inputs.channels = sensors.generic(6)
     out = outputs(LateEvidential(inputs, d=8), inputs, np.arange(n))
     assert out["fused_nig"].shape == (n, 4)
 

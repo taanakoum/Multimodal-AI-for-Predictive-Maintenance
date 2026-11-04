@@ -1,13 +1,25 @@
-"""Hyperparameter search on the inner-validation units (plan: everything is chosen on
+"""Hyperparameter search by nested cross-validation (plan: everything is chosen on
 validation units; test units are scored once, with fixed settings).
 
-For every configuration of a small grid and every outer fold, the model is fitted on the
-fold's training units (one seed) and keeps its best inner-validation score, the training
-loop's selection score: the mean of bag macro-F1 and 1 - RMSE / std. The configuration with
-the best mean over folds wins; near-ties (a gap within one standard error of the paired
-fold-wise differences) go to the cheaper configuration (smaller width, fewer options). Test
-units are never read. The search resumes: finished (configuration, fold) pairs are kept in
-``results.csv``.
+Within each outer fold k, the configurations of a small grid are fitted and scored on the
+inner folds of :func:`pdmfm.protocols.inner_folds`: validation rotates over the other four
+folds' test groups, training uses the rest of fold k's non-test units, and fold k's test
+units are never read. Each fit keeps its best inner-validation score, the training loop's
+selection score (mean of bag macro-F1 and 1 - RMSE / std).
+
+Two choices come out, both by the same rule (best mean; near-ties, a gap within one
+standard error of the paired split-wise differences, go to the cheaper configuration):
+
+* ``per_fold[k]``: from fold k's four inner splits only. Fold k's test run uses it
+  (``python -m pdmfm.planb --per-fold best.json``), so no test unit of any fold helped
+  choose the settings it is scored with: the in-domain estimate is nested and unbiased.
+* ``chosen``: from all 20 inner splits, for the final model (pretraining and the held-out
+  targets, which no fold's selection ever reads).
+
+The previous version scored each configuration on one validation group per fold and chose
+once from the mean over folds; fold k's validation group is fold k+1's test group, so the
+choice used test units of other folds (a selection bias, PROJECT_LOG week 7). The search
+resumes: finished (configuration, split) pairs are kept in ``results.csv``.
 
     python -m pdmfm.tune --dataset nonastreda --encoder mantis --arms F --run-id tune-nona \\
         --grid lr=3e-4,1e-3 dropout=0.1,0.3 d=128,256
@@ -63,6 +75,32 @@ def _cost(params: dict) -> tuple:
     )
 
 
+def choose(table: pd.DataFrame) -> tuple[str, pd.DataFrame]:
+    """(chosen configuration key, ranking) from the validation scores of the splits in
+    ``table``: the best mean; near-ties (a gap within one standard error of the paired
+    split-wise differences to the best) go to the cheapest configuration."""
+    ranking = (
+        table.groupby("config")
+        .agg(mean=("val_score", "mean"), std=("val_score", "std"), splits=("split", "nunique"))
+        .reset_index()
+    )
+    top = ranking.loc[ranking["mean"].idxmax()]
+    scores = table.pivot_table(index="split", columns="config", values="val_score")
+    gaps = scores[top["config"]].to_numpy()[:, None] - scores.to_numpy()
+    se = np.nanstd(gaps, axis=0, ddof=1) / np.sqrt(np.sum(np.isfinite(gaps), axis=0))
+    gap = dict(zip(scores.columns, np.nanmean(gaps, axis=0), strict=True))
+    gap_se = dict(zip(scores.columns, np.nan_to_num(se), strict=True))
+    ranking["gap"] = [gap[c] for c in ranking["config"]]
+    ranking["gap_se"] = [gap_se[c] for c in ranking["config"]]
+    close = ranking[ranking["gap"] <= ranking["gap_se"]]
+    chosen = min(close["config"], key=lambda c: _cost(json.loads(c)))
+    return str(chosen), ranking
+
+
+def _flags(params: dict) -> str:
+    return " ".join(f"--{k.replace('_', '-')} {v}" for k, v in params.items())
+
+
 def search(
     dataset: str,
     encoder: str,
@@ -78,12 +116,17 @@ def search(
     feature_root: Path | None = None,
     log=print,
 ) -> dict:
-    """Score every configuration on every fold's inner-validation units; write
-    ``results.csv`` and ``best.json``; return the best configuration."""
+    """Score every configuration on the inner splits of every outer fold; write
+    ``results.csv`` and ``best.json``; return the report (``chosen``, ``per_fold``)."""
     out = (Path(out_root) if out_root else REPO_ROOT / "runs" / "tune") / run_id
     out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.csv"
     done = pd.read_csv(results_path) if results_path.is_file() else pd.DataFrame()
+    if len(done) and "split" not in done:
+        raise ValueError(
+            f"{results_path} comes from the single-split search (no inner splits); "
+            "use another --run-id"
+        )
     records = done.to_dict("records")
     manifest = WindowStore.open(dataset, window_root).manifest
     options = {
@@ -100,75 +143,84 @@ def search(
         for values in itertools.product(*(grid[n] for n in names))
     ]
     prepared = None
+    per_split = dataset in FOLD_BASELINE  # the level baseline comes from training units
     for fold in folds:
-        split = FOLDS[dataset](manifest, fold)
-        if prepared is None or "{fold}" in encoder or dataset in FOLD_BASELINE:
-            train_units = sorted(split.units(manifest, "train"))
-            prepared = prepare_inputs(
-                dataset, encoder.replace("{fold}", str(fold)), arm_list, base, train_units,
-                options, log,
-            )  # fmt: skip
-        inputs, _, _, any_present = prepared
-        labelled = any_present.copy()
-        if inputs.y_class is not None:
-            labelled &= inputs.y_class >= 0
-        elif inputs.y_reg is not None:
-            labelled &= np.isfinite(inputs.y_reg)
-        train_rows = np.flatnonzero(split.train & labelled)
-        val_rows = np.flatnonzero(split.val & labelled)
-        for params in configurations:
-            key = json.dumps(params, sort_keys=True)
-            if any(r.get("config") == key and r.get("fold") == fold for r in records):
+        for inner in protocols.inner_folds(dataset, manifest, fold):
+            inner.assert_unit_disjoint(manifest)
+            todo = [
+                p for p in configurations
+                if not any(r.get("config") == json.dumps(p, sort_keys=True)
+                           and r.get("split") == inner.name for r in records)
+            ]  # fmt: skip
+            if not todo:
                 continue
-            cfg = replace(base, **params)
-            fitted = fit(inputs, train_rows, val_rows, cfg, seed, log=log)
-            best = max(fitted.history, key=lambda h: h["val_score"])
-            records.append(
-                {
-                    "config": key,
-                    "fold": fold,
-                    "val_score": best["val_score"],
-                    "train_score": best.get("train_score", np.nan),
-                    "best_epoch": fitted.best_epoch,
-                    "seconds": round(fitted.seconds, 1),
-                    **params,
-                }
-            )
-            pd.DataFrame(records).to_csv(results_path, index=False)
-            log(f"[tune] fold {fold} {key}: validation {best['val_score']:.3f}")
+            if prepared is None or per_split or "{fold}" in encoder:
+                train_units = sorted(inner.units(manifest, "train"))
+                prepared = prepare_inputs(
+                    dataset, encoder.replace("{fold}", str(fold)), arm_list, base, train_units,
+                    options, log,
+                )  # fmt: skip
+            inputs, _, _, any_present = prepared
+            labelled = any_present.copy()
+            if inputs.y_class is not None:
+                labelled &= inputs.y_class >= 0
+            elif inputs.y_reg is not None:
+                labelled &= np.isfinite(inputs.y_reg)
+            train_rows = np.flatnonzero(inner.train & labelled)
+            val_rows = np.flatnonzero(inner.val & labelled)
+            for params in todo:
+                key = json.dumps(params, sort_keys=True)
+                cfg = replace(base, **params)
+                fitted = fit(inputs, train_rows, val_rows, cfg, seed, log=log)
+                best = max(fitted.history, key=lambda h: h["val_score"])
+                records.append(
+                    {
+                        "config": key,
+                        "fold": fold,
+                        "split": inner.name,
+                        "val_score": best["val_score"],
+                        "train_score": best.get("train_score", np.nan),
+                        "best_epoch": fitted.best_epoch,
+                        "seconds": round(fitted.seconds, 1),
+                        **params,
+                    }
+                )
+                pd.DataFrame(records).to_csv(results_path, index=False)
+                log(f"[tune] {inner.name} {key}: validation {best['val_score']:.3f}")
     table = pd.DataFrame(records)
-    ranking = (
-        table.groupby("config")
-        .agg(mean=("val_score", "mean"), std=("val_score", "std"), folds=("fold", "nunique"))
-        .reset_index()
-    )
-    top = ranking.loc[ranking["mean"].idxmax()]
-    # Configurations share the folds, so a near-tie is judged on the paired fold-wise
-    # differences to the best one: a gap within one standard error of those differences.
-    scores = table.pivot_table(index="fold", columns="config", values="val_score")
-    gaps = scores[top["config"]].to_numpy()[:, None] - scores.to_numpy()
-    se = np.nanstd(gaps, axis=0, ddof=1) / np.sqrt(np.sum(np.isfinite(gaps), axis=0))
-    gap = dict(zip(scores.columns, np.nanmean(gaps, axis=0), strict=True))
-    gap_se = dict(zip(scores.columns, np.nan_to_num(se), strict=True))
-    ranking["gap"] = [gap[c] for c in ranking["config"]]
-    ranking["gap_se"] = [gap_se[c] for c in ranking["config"]]
-    close = ranking[ranking["gap"] <= ranking["gap_se"]]
-    chosen = min(close["config"], key=lambda c: _cost(json.loads(c)))
+    table = pd.DataFrame(table.loc[table["fold"].isin(folds)])
+    chosen, ranking = choose(table)
     params = json.loads(chosen)
+    per_fold = {}
+    for fold in folds:
+        fold_choice, fold_ranking = choose(pd.DataFrame(table.loc[table["fold"] == fold]))
+        fold_params = json.loads(fold_choice)
+        per_fold[str(fold)] = {
+            "overrides": fold_params,
+            "flags": _flags(fold_params),
+            "mean": float(fold_ranking.set_index("config").loc[fold_choice, "mean"]),
+            "splits": int(table.loc[table["fold"] == fold, "split"].nunique()),
+        }
+    agreement = float(np.mean([v["overrides"] == params for v in per_fold.values()]))
     report = {
         "run_id": run_id,
         "dataset": dataset,
         "encoder": encoder,
         "arms": list(arm_list),
         "chosen": params,
-        "best_mean": float(top["mean"]),
+        "best_mean": float(ranking["mean"].max()),
         "chosen_mean": float(ranking.set_index("config").loc[chosen, "mean"]),
         "ranking": ranking.sort_values("mean", ascending=False).to_dict("records"),
-        "flags": " ".join(f"--{k.replace('_', '-')} {v}" for k, v in params.items()),
+        "flags": _flags(params),
+        "per_fold": per_fold,
+        "per_fold_agreement": agreement,
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     write_json_atomic(out / "best.json", report)
-    log(f"[tune] chosen {params} (mean validation {report['chosen_mean']:.3f}) -> {out}")
+    log(
+        f"[tune] chosen {params} (mean validation {report['chosen_mean']:.3f}); per outer "
+        f"fold the same in {agreement:.0%} of folds -> {out}"
+    )
     return report
 
 

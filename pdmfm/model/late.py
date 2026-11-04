@@ -18,6 +18,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from pdmfm import sensors
 from pdmfm.losses import ds_combine_all, nig_fuse_all
 from pdmfm.model.inputs import TaskInputs
 from pdmfm.model.layers import (
@@ -55,6 +56,9 @@ def _standardizer(values: np.ndarray, rows, mask: np.ndarray | None = None):
 
 
 class LateEvidential(nn.Module):
+    channel_codes: torch.Tensor  # (C, 4) buffer: the dataset's channel descriptions
+    channel_scale: torch.Tensor  # (C, 2) buffer
+
     def __init__(
         self,
         inputs: TaskInputs,
@@ -69,17 +73,23 @@ class LateEvidential(nn.Module):
         self.class_heads = nn.ModuleDict()
         self.reg_heads = nn.ModuleDict()
         prototypes = None if inputs.prototypes is None else torch.from_numpy(inputs.prototypes)
-        n_channels = 1 + max(
+        if inputs.channels is None:
+            raise ValueError("inputs.channels is missing: describe every channel (pdmfm.sensors)")
+        used = max(
             int(np.max(np.concatenate([m.channels, m.level_channels])))
             if m.level_channels is not None
             else int(m.channels.max())
             for m in inputs.modalities.values()
         )
+        if used >= len(inputs.channels):
+            raise ValueError(f"a token uses channel {used}; only {len(inputs.channels)} described")
+        codes, scale = sensors.table(inputs.channels)
+        self.register_buffer("channel_codes", torch.from_numpy(codes))
+        self.register_buffer("channel_scale", torch.from_numpy(scale))
         for name, modality in inputs.modalities.items():
             self.encoders[name] = ModalityEncoder(
                 modality.dim,
                 d=d,
-                n_channels=n_channels,
                 levels=modality.levels is not None,
                 age=modality.age is not None,
                 dropout=dropout,
@@ -90,6 +100,12 @@ class LateEvidential(nn.Module):
             self.register_buffer(
                 f"channels_{name}", torch.as_tensor(modality.channels, dtype=torch.long)
             )
+            positions = (
+                np.zeros(len(modality.roles), dtype=np.int64)
+                if modality.positions is None
+                else modality.positions
+            )
+            self.register_buffer(f"positions_{name}", torch.as_tensor(positions, dtype=torch.long))
             if modality.level_channels is not None:
                 level_channels = torch.as_tensor(modality.level_channels, dtype=torch.long)
                 self.register_buffer(f"level_channels_{name}", level_channels)
@@ -113,20 +129,31 @@ class LateEvidential(nn.Module):
             return values
         return (values - getattr(self, f"{prefix}_mean")) / getattr(self, f"{prefix}_std")
 
+    def embed(self, name: str, part: dict[str, torch.Tensor]):
+        """(token embeddings, token present) of one modality's batch part."""
+        encoder = self.encoders[name]
+        assert isinstance(encoder, ModalityEncoder)
+        return encoder.embed(
+            self._standardized(f"tokens_{name}", part["tokens"]),
+            getattr(self, f"roles_{name}"),
+            getattr(self, f"channels_{name}"),
+            self.channel_codes,
+            self.channel_scale,
+            positions=getattr(self, f"positions_{name}"),
+            token_present=part.get("token_present"),
+            levels=self._standardized(f"levels_{name}", part.get("levels")),
+            level_channels=getattr(self, f"level_channels_{name}", None),
+            age=part.get("age"),
+        )
+
     def forward(self, batch: dict[str, dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         """``batch[name]`` holds tokens, present and optionally token_present, levels, age."""
         evidence, nig, present, attention = [], [], [], {}
         for name in self.names:
             part = batch[name]
-            z, weights = self.encoders[name](
-                self._standardized(f"tokens_{name}", part["tokens"]),
-                getattr(self, f"roles_{name}"),
-                getattr(self, f"channels_{name}"),
-                token_present=part.get("token_present"),
-                levels=self._standardized(f"levels_{name}", part.get("levels")),
-                level_channels=getattr(self, f"level_channels_{name}", None),
-                age=part.get("age"),
-            )
+            encoder = self.encoders[name]
+            assert isinstance(encoder, ModalityEncoder)
+            z, weights = encoder.pool(*self.embed(name, part))
             here = part["present"]
             present.append(here)
             attention[name] = weights

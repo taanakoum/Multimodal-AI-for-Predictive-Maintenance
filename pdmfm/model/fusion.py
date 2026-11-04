@@ -189,15 +189,7 @@ class FusionModel(LateEvidential):
             part = batch[name]
             encoder = self.encoders[name]
             assert isinstance(encoder, ModalityEncoder)
-            x, token_present = encoder.embed(
-                self._standardized(f"tokens_{name}", part["tokens"]),
-                getattr(self, f"roles_{name}"),
-                getattr(self, f"channels_{name}"),
-                token_present=part.get("token_present"),
-                levels=self._standardized(f"levels_{name}", part.get("levels")),
-                level_channels=getattr(self, f"level_channels_{name}", None),
-                age=part.get("age"),
-            )
+            x, token_present = self.embed(name, part)
             z, weights = encoder.pool(x, token_present)
             here = part["present"]
             present.append(here)

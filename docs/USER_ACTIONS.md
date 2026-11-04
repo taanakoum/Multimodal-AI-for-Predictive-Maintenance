@@ -193,6 +193,14 @@ Improvements found this week, for your go-ahead (details and costs in `PROJECT_L
 7. **Healthy support from other recordings** in the stage-8 anomaly runs (KAIST's 4 Nm
    healthy data is one recording, so same-recording support flatters the false alarms).
 
+Queued experiments (protocols fixed in `PROJECT_LOG.md`, week 7, "Queued experiments"):
+
+- **E1. Task-specific adapters** (your question, 2026-11-03): single-task against joint Plan B
+  on Nonastreda and MATWI; adapters or loss weights only if the tasks interfere, adopted by
+  the Gate-2 rule; the class derived from the wear prediction reported in every case.
+- **E2. Sensor-type and sampling-rate embeddings**: required before cross-dataset
+  pretraining (stage 6); today's channel embedding is positional within each dataset.
+
 Carried forward:
 - **Cross-tool generalization is the limit on both milling sets** (training macro-F1 0.93
   against 0.41-0.78 on test tools).

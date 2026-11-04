@@ -25,9 +25,15 @@ parameters (each compared at a resolution of 0.01).
 Decision rule, fixed before any result (as for the Plan B options): the best fusion
 candidate replaces late fusion only if its mean score beats the better of ``planb`` and
 ``late`` by at least ``MIN_GAIN`` and it wins at least ``MIN_WIN_RATE`` of the paired
-folds. Otherwise Plan B stays the model (the plan's Gate-2 fallback). The winner and the
-reference are then scored once on the outer test units with :mod:`pdmfm.planb` (the
-``flags`` in ``decision.json``).
+folds. Otherwise Plan B stays the model (the plan's Gate-2 fallback).
+
+The rule is applied twice: over all 20 inner splits (``model``, ``flags``: the final model,
+for pretraining and the held-out targets) and within each outer fold over its own 4 inner
+splits (``per_fold``; a win rate of 0.6 then needs 3 of 4). Fold k's inner splits validate
+on the other folds' test groups, never on fold k's, so scoring fold k's test units with
+fold k's own decision (``python -m pdmfm.planb --per-fold decision.json``) gives a nested,
+unbiased in-domain estimate. The pooled decision is informed by every fold's test units
+through the other folds' inner splits, so it is not used for that estimate.
 
     python -m pdmfm.gate2 --dataset nonastreda --encoder mantis --arms F --run-id gate2-nona
 """
@@ -183,7 +189,18 @@ def search(
                 records.append({"candidate": name, "outer": k, "split": inner.name, **scores})
                 pd.DataFrame(records).to_csv(results_path, index=False)
                 log(f"[gate2] {inner.name} {name}: {scores['score']:.3f}")
-    report = decide(pd.DataFrame(records), configs)
+    table = pd.DataFrame(records)
+    report = decide(table, configs)
+    report["per_fold"] = {
+        str(k): per_fold_entry(
+            decide(pd.DataFrame(table.loc[table["outer"] == k]), configs), configs
+        )  # fmt: skip
+        for k in folds
+        if (table["outer"] == k).any()
+    }
+    report["per_fold_agreement"] = float(
+        np.mean([v["model"] == report["model"] for v in report["per_fold"].values()])
+    )
     report.update(
         run_id=run_id, dataset=dataset, encoder=encoder, arms=list(arm_list), seed=seed,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -290,6 +307,20 @@ def decide(table: pd.DataFrame, configs: dict) -> dict:
     }
 
 
+OVERRIDES = ("fusion", "lr", "schedule", "input_dropout", "modality_dropout")
+
+
+def per_fold_entry(decision: dict, configs: dict) -> dict:
+    """One outer fold's decision as Plan B overrides (``--per-fold``)."""
+    model = decision["model"]
+    cfg = configs[model]
+    return {
+        "model": model,
+        "overrides": {name: getattr(cfg, name) for name in OVERRIDES},
+        "verdict": decision["verdict"],
+    }
+
+
 def _markdown(report: dict) -> str:
     lines = [
         f"# Gate 2: {report['run_id']} ({report['dataset']}, {report['encoder']} "
@@ -312,6 +343,15 @@ def _markdown(report: dict) -> str:
             f"{row['calibration']:.3f} | {int(row['n_params']):,} | {int(row['folds'])} | "
             f"{row['seconds']:.0f} |"
         )
+    if report.get("per_fold"):
+        lines += [
+            "",
+            "Per outer fold (the rule within its own 4 inner splits; fold k's test run uses "
+            f"its own decision): same model as above in {report['per_fold_agreement']:.0%} of "
+            "folds.",
+            "",
+        ]
+        lines += [f"- fold {k}: `{v['model']}`" for k, v in report["per_fold"].items()]
     return "\n".join(lines) + "\n"
 
 

@@ -1146,6 +1146,57 @@ compared with.
    and for Paderborn from other healthy bearings than the tested ones. How it helps: false
    alarms measured across sessions, as a deployment meets them. Cost: hours.
 
+### Queued experiments (2026-11-03; to run before or with pretraining, adopted only by the rule)
+
+**E1. Task-specific adapters, and the class derived from the wear prediction.** Question
+(yours, 2026-11-03): would separate classification and regression adapters between the
+shared representation and the heads learn task-specific features better than one shared z?
+
+- *Now:* each expert and the fusion stage give one z. The class head has its own linear
+  projection W_q into the text space (cosine with the frozen Qwen prototypes); the NIG head is
+  already a task-specific MLP (z → 128 → 4). The loss is an unweighted sum of the evidential
+  class losses and the NIG losses.
+- *Why it is not the default:* only Nonastreda and MATWI carry both tasks, and there the class
+  is the wear thresholded at 71 / 110 µm (exactly on MATWI, on 360 of 378 Nonastreda passes),
+  so the tasks are aligned rather than conflicting; the measured problem is generalization
+  (MATWI training tools 0.93 against test tools 0.41), which more head parameters do not fix;
+  and an MLP between z and the prototypes would move the text alignment out of z, which
+  pretraining and zero-shot transfer rely on.
+- *Protocol (fixed now, inner-validation units only, Nonastreda and MATWI):*
+  1. Plan B trained on the class loss only, on the regression loss only, and on both.
+  2. If a single-task model beats the joint one on its own metric by at least 0.01 (bag
+     macro-F1, or 1 − RMSE / std), the tasks interfere: then test (a) learned loss weights
+     (homoscedastic uncertainty weighting, Kendall et al. 2018) and (b) task adapters (a
+     residual two-layer MLP d → d per task, with dropout, before each head). Each is adopted
+     only with a gain of at least 0.01 and wins on at least 60 % of the paired folds (the
+     Gate-2 rule); otherwise the shared z stays.
+  3. In every case, report the class derived from the NIG predictive distribution as a
+     decision variant (P(wear < 71), P(71-110), P(> 110 µm) from the Student-t), next to
+     argmax and the ordinal median. No new parameters; the two tasks can no longer
+     contradict each other. It matches MATWI's label definition exactly and differs from
+     Nonastreda's visual labels on 18 passes.
+- *Where adapters may matter more:* pretraining across datasets (stage 6), where one backbone
+  serves bearing fault classes, RUL and wear; task- or dataset-specific towers are the usual
+  answer there and are part of the stage-6 design.
+- *Cost:* about half a day (`--tasks class|reg|both`, `--task-adapters`, the derived decision
+  in `planb` and `report`) and about an hour of CPU.
+
+**E2. Sensor-type and sampling-rate embeddings before cross-dataset pretraining.** Found while
+answering how time scales enter the model. The plan's token design gives each channel
+"embeddings for sensor type, axis and sampling rate"; the code has a role embedding (T, F, E,
+S, level, photo kinds, slow) and a channel embedding indexed by the channel's position in its
+own dataset, and no rate or sensor-type embedding. With one model per dataset this is
+harmless (channel 0 always means the same sensor). In stage 6, where one backbone reads every
+dataset, channel 0 is CWRU's drive-end accelerometer, Nonastreda's Fx and MATWI's Fx, and the
+same input bin means different frequencies (F arm: 9.8 Hz bins to 5 kHz at 12 kHz, 1 Hz bins to
+500 Hz at 1 kHz; a T segment lasts 43 ms at 12 kHz and 512 ms at 1 kHz). Required before
+pretraining: replace the positional channel embedding by embeddings of the channel's family,
+axis and placement, plus the sampling rate (log scale) and, for T tokens, the segment duration.
+How it helps: tokens from different machines become comparable, so pretraining can share what
+is physically shared. Check: the dataset-identity probe on the pretrained z, and the
+per-dataset inner-validation scores against the per-dataset models. Cost: about a day, part
+of the stage-6 work.
+
 ### Verification of this pass
 
 | Check | Result |

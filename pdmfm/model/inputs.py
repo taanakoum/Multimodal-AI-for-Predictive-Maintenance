@@ -32,6 +32,13 @@ with the window store's manifest:
 * **Targets:** class index in the dataset's label space (Qwen prototypes from the text cache)
   and the regression target (wear in µm, normalized RUL), NaN where absent.
 
+* **Channels:** every token carries the index of its channel in ``TaskInputs.channels``,
+  the physical description of each channel (:mod:`pdmfm.sensors`: family, axis, location,
+  site, sampling rate, window length; then one ``image`` entry for photo tokens). The model
+  embeds the description, never the index, so the same sensor type means the same thing in
+  every dataset. ``Modality.positions`` gives each token's slot within its channel and role
+  (a T token's time slot, a photo token's grid cell).
+
 Context text is not a modality here: it never names the state (by construction), so an
 opinion from it would be vacuous; it serves the leakage check and later fusion stages.
 """
@@ -46,7 +53,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pdmfm import arms
+from pdmfm import arms, sensors
 from pdmfm import preprocess as pp
 from pdmfm import texts as text_specs
 from pdmfm.features import FeatureStore
@@ -57,6 +64,8 @@ ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "s
 ROLE = {name: i for i, name in enumerate(ROLES)}
 PHOTO_KINDS = ("tool", "chip", "workpiece", "insert")  # token order of the photo modality
 MAX_PHOTO_LAG = 3  # photos of up to the 3rd previous pass
+MAX_POSITIONS = 16  # token slots per channel and role (6 T tokens; up to 9 photo tokens)
+CHANNEL_EMBEDDING = "semantic-v1"  # pdmfm.sensors descriptions (part of every settings key)
 NO_LEVEL = {"nonastreda": ("fz",)}  # Fz drifts by block (EDA F10)
 DC_FAMILIES = ("force",)  # channels whose window mean ``force_mean`` adds
 LEVEL_MODES = ("relative", "both", "absolute")
@@ -74,7 +83,7 @@ class Modality:
     name: str
     tokens: np.ndarray  # (N, T, D) float32
     roles: np.ndarray  # (T,) role index
-    channels: np.ndarray  # (T,) channel index within the dataset
+    channels: np.ndarray  # (T,) index into TaskInputs.channels
     present: np.ndarray  # (N,) bool: the modality exists for the row
     token_present: np.ndarray | None = None  # (N, T) bool, None: all tokens present
     levels: np.ndarray | None = None  # (N, L, F) level descriptors (see ``level_names``)
@@ -82,6 +91,7 @@ class Modality:
     age: np.ndarray | None = None  # (N, T) passes since capture (photos)
     descriptor: bool = False  # tokens are small descriptor vectors (slow channels)
     views: PhotoViews | None = None  # alternative photo token sets (photos only)
+    positions: np.ndarray | None = None  # (T,) slot within the channel and role; None: all 0
 
     @property
     def dim(self) -> int:
@@ -137,6 +147,8 @@ class TaskInputs:
     y_reg: np.ndarray | None = None  # (N,) float, NaN unlabelled
     regression_target: str | None = None
     description: dict = field(default_factory=dict)
+    # Physical description of every channel index the modalities use (pdmfm.sensors).
+    channels: list[sensors.ChannelInfo] | None = None
 
 
 def baseline_groups(
@@ -246,7 +258,7 @@ def _sensor_modalities(
     modalities = {}
     done = np.ones(len(store), dtype=bool)
     for family in families:
-        blocks, roles, channels = [], [], []
+        blocks, roles, channels, positions = [], [], [], []
         for arm in arm_list:
             if arm in arms.unavailable(store):
                 continue
@@ -261,6 +273,7 @@ def _sensor_modalities(
             blocks.append(block.reshape(n, c * k, d))
             roles += [ROLE[arm]] * (c * k)
             channels += [arm_ch[j] for j in members for _ in range(k)]
+            positions += list(range(k)) * c  # the T arm's time slots; 0 for one-token arms
         if not blocks:
             continue
         level_ch = [
@@ -278,6 +291,7 @@ def _sensor_modalities(
             roles=np.asarray(roles),
             channels=np.asarray(channels),
             present=np.ones(len(store), dtype=bool),
+            positions=np.asarray(positions),
             levels=family_levels,
             level_channels=np.asarray(level_ch) if level_ch else None,
         )
@@ -351,7 +365,7 @@ def lagged_photo_index(manifest: pd.DataFrame, kind: str, index: dict[str, int])
 
 def _photo_modality(store: WindowStore, root: Path) -> Modality:
     manifest = store.manifest
-    banks, lag_index, roles = [], [], []
+    banks, lag_index, roles, positions = [], [], [], []
     for kind in [k for k in PHOTO_KINDS if k in store.spec.image_kinds]:
         paths, features = _image_cache(root, store.dataset, kind)
         index = {p: i for i, p in enumerate(paths)}
@@ -368,6 +382,7 @@ def _photo_modality(store: WindowStore, root: Path) -> Modality:
         banks.append(bank)
         lag_index.append(lagged_photo_index(manifest, kind, index))
         roles += [ROLE[kind]] * features.shape[1]
+        positions += list(range(features.shape[1]))  # class token, then the grid cells
     photo_views = PhotoViews(banks=banks, index=np.stack(lag_index, axis=2))
     rows = np.arange(len(manifest))
     ones = np.ones(len(manifest), dtype=np.int64)
@@ -376,7 +391,9 @@ def _photo_modality(store: WindowStore, root: Path) -> Modality:
         name="photo",
         tokens=tokens,
         roles=np.asarray(roles),
-        channels=np.zeros(len(roles), dtype=int),
+        # Photo tokens point at the "image" entry after the high-rate and slow channels.
+        channels=np.full(len(roles), len(store.channels) + len(store.slow_channels)),
+        positions=np.asarray(positions),
         present=np.asarray(np.any(token_present, axis=1)),
         token_present=token_present,
         age=age,
@@ -431,8 +448,14 @@ def assemble(
         modalities["photo"] = _photo_modality(store, root)
     for modality in modalities.values():
         modality.present &= done
+        if modality.positions is not None and modality.positions.max() >= MAX_POSITIONS:
+            raise ValueError(f"{modality.name}: more than {MAX_POSITIONS} tokens per channel")
     manifest = store.manifest
     inputs = TaskInputs(dataset=dataset, manifest=manifest, modalities=modalities)
+    inputs.channels = sensors.describe(
+        dataset, store.channels, store.slow_channels, store.rate, store.window / store.rate,
+        image="photo" in modalities,
+    )  # fmt: skip
     label_space = text_specs.load(dataset).label_space
     if label_space:
         classes, prototypes = _prototypes(dataset, root)
@@ -449,6 +472,8 @@ def assemble(
         "arms": list(arm_list),
         "window_store": store.key,
         "levels": levels,
+        "channel_embedding": CHANNEL_EMBEDDING,
+        "channels": sensors.as_dicts(inputs.channels),
         "modalities": {
             m.name: {
                 "tokens": int(m.tokens.shape[1]),
