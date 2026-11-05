@@ -239,6 +239,45 @@ def test_run_writes_results_resumes_and_refuses_other_settings(root):
         run(root, "nonastreda", ("T", "F"), "resume", cfg=TrainConfig(epochs=3, d=32))
 
 
+def test_each_fold_runs_with_its_own_choice(root, tmp_path):
+    """--per-fold (a tune best.json or a gate2 decision.json): fold k trains with fold k's
+    own nested choice; each fold's settings say so; a missing fold or an unknown option is
+    refused, and so is a file made before nested selection."""
+    choices = tmp_path / "best.json"
+    choices.write_text(json.dumps({"per_fold": {"1": {"overrides": {"d": 16}},
+                                                "2": {"overrides": {"d": 32}}}}))  # fmt: skip
+    per_fold = planb.load_per_fold(choices)
+    assert per_fold == {1: {"d": 16}, 2: {"d": 32}}
+    out = planb.run(
+        "nonastreda", "stats", ("T", "F"), "nested", [1, 2], [0], SMALL, out_root=root / "runs",
+        window_root=root / "interim" / "windows", feature_root=root / "interim" / "features",
+        log=quiet, per_fold=per_fold,
+    )  # fmt: skip
+    widths = {}
+    for fold in (1, 2):
+        result = json.loads((out / f"fold{fold}-seed0.json").read_text(encoding="utf-8"))
+        widths[fold] = result["settings"]["train"]["d"]
+        assert result["settings"]["per_fold"] is True
+    assert widths == {1: 16, 2: 32}
+    with pytest.raises(ValueError, match="no choice for fold 3"):
+        planb.run(
+            "nonastreda", "stats", ("T", "F"), "nested", [3], [0], SMALL, out_root=root / "runs",
+            window_root=root / "interim" / "windows",
+            feature_root=root / "interim" / "features", log=quiet, per_fold=per_fold,
+        )  # fmt: skip
+    fusion = tmp_path / "decision.json"
+    decisions = {"1": {"overrides": {"fusion": "concat"}}, "2": {"overrides": {"fusion": "late"}}}
+    fusion.write_text(json.dumps({"per_fold": decisions}))
+    merged = planb.load_per_fold(choices, fusion)  # tune's width, then Gate 2's fusion
+    assert merged == {1: {"d": 16, "fusion": "concat"}, 2: {"d": 32, "fusion": "late"}}
+    choices.write_text(json.dumps({"per_fold": {"1": {"overrides": {"depth": 3}}}}))
+    with pytest.raises(ValueError, match="unknown options"):
+        planb.load_per_fold(choices)
+    choices.write_text(json.dumps({"flags": "--d 16"}))
+    with pytest.raises(ValueError, match="no per-fold choices"):
+        planb.load_per_fold(choices)
+
+
 def test_result_contents(root):
     out = run(root, "nonastreda", ("T", "F"), "contents")
     result = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))

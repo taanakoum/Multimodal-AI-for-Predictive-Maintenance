@@ -532,25 +532,34 @@ units):
 
 ```bash
 for dataset in nonastreda matwi xjtu_sy paderborn; do
-  sbatch --job-name=tune-$dataset --time=04:00:00 slurm/job.sbatch \
+  sbatch --job-name=tune-$dataset --time=08:00:00 slurm/job.sbatch \
     python -m pdmfm.tune --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id tune-v1-$dataset --grid d=64,256 dropout=0.1,0.3 lr=3e-4,1e-3 --device cuda
 done
 ```
 
-Each writes `runs/tune/tune-v1-<dataset>/best.json`: the chosen settings, the ranking, and
-the flags for Plan B. Near-ties (within one standard error of the paired fold-wise
-differences) go to the smaller model. On the laptop, the same search chose the defaults for
-Nonastreda and d = 64 for XJTU-SY (`PROJECT_LOG.md`, week 5).
+The search is nested: within each outer fold it scores every configuration on the fold's 4
+inner splits, never on the fold's test units, so each job fits 8 configurations × 20 splits
+(give it `--time=08:00:00` if it stops; it resumes). Each writes
+`runs/tune/tune-v1-<dataset>/best.json`:
+
+- `per_fold`: each outer fold's own choice. §16.3 scores each fold's test units with it
+  (`--per-fold`), so no test unit helped choose the settings it is scored with;
+- `chosen` and `flags`: the choice over all 20 splits, for the final model (pretraining and
+  the held-out targets);
+- `per_fold_agreement`: how often the two agree.
+
+Near-ties (within one standard error of the paired split-wise differences) go to the smaller
+model. On the laptop, the earlier single-split search chose the defaults for Nonastreda and
+d = 64 for XJTU-SY (`PROJECT_LOG.md`, week 5).
 
 **16.3 Submit Plan B** with the tuned flags (one GPU job per dataset), then the handcrafted
 reference and a photo-free Nonastreda run:
 
 ```bash
 for dataset in nonastreda matwi xjtu_sy paderborn; do
-  FLAGS=$(python -c "import json; print(json.load(open('runs/tune/tune-v1-$dataset/best.json'))['flags'])")
-  echo "$dataset: $FLAGS"
+  TUNED=runs/tune/tune-v1-$dataset/best.json
   sbatch --job-name=planb-$dataset --time=02:00:00 slurm/job.sbatch \
-    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-$dataset $FLAGS --device cuda
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-$dataset --per-fold $TUNED --device cuda
   sbatch --job-name=planb-$dataset-stats --time=02:00:00 slurm/job.sbatch \
     python -m pdmfm.planb --dataset $dataset --encoder stats --arms F E --run-id planb-v1-$dataset-stats --device cuda
 done
@@ -558,6 +567,8 @@ sbatch --job-name=planb-nonastreda-nophoto --time=02:00:00 slurm/job.sbatch \
   python -m pdmfm.planb --dataset nonastreda --encoder "$ENCODER" --arms $ARMS --run-id planb-v1-nonastreda-nophoto --no-photos --device cuda
 ```
 
+- `--per-fold` gives each fold its own tuned settings (the nested estimate); the first
+  lines of each fold in the log show them.
 - Keep the quotes around `"$ENCODER"`: they protect `{fold}`.
 - Level tokens are relative to each unit's healthy baseline (`--levels relative`, the
   default and the plan's form). `--levels both` (absolute descriptors) and `--force-mean`
@@ -625,16 +636,16 @@ done
 - The rule, fixed before any result: a fusion candidate replaces late fusion only if its mean
   inner-validation score beats the better of `planb` and `late` by at least 0.01 and it wins
   at least 60 % of the 20 paired folds. Otherwise Plan B stays the model.
+- The rule is applied over all 20 splits (`model`: the final model) and within each outer
+  fold over its own 4 splits (`per_fold` in `decision.json`; 3 wins of 4 needed).
 
-Then score the chosen model once on the outer test units (if it is `planb`, this repeats the
-§16.3 run with the same settings; that is harmless):
+Then score each fold's own choice once on its test units, with the tuned settings first and
+Gate 2's choice second (if every fold keeps `planb`, this repeats §16.3; that is harmless):
 
 ```bash
 for dataset in nonastreda matwi paderborn; do
-  FLAGS=$(python -c "import json; print(json.load(open('runs/gate2/gate2-v1-$dataset/decision.json'))['flags'])")
-  echo "$dataset: $FLAGS"
   sbatch --job-name=gate2-test-$dataset --time=04:00:00 slurm/job.sbatch \
-    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id gate2-v1-$dataset-test $FLAGS --device cuda
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id gate2-v1-$dataset-test --per-fold runs/tune/tune-v1-$dataset/best.json runs/gate2/gate2-v1-$dataset/decision.json --device cuda
 done
 ```
 

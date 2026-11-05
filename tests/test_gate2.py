@@ -178,7 +178,7 @@ def test_each_outer_fold_decides_on_its_own_inner_splits():
         "fusion": "c2f", "lr": 3e-4, "schedule": "cosine", "input_dropout": 0.3,
         "modality_dropout": 0.0,
     }  # fmt: skip
-    assert per_fold[2]["overrides"]["fusion"] == "late" and per_fold[2]["overrides"]["lr"] == 1e-3
+    assert per_fold[2]["overrides"] == {"fusion": "late"}  # Plan B keeps its tuned recipe
 
 
 def test_regression_only_datasets_rank_by_interval_coverage():

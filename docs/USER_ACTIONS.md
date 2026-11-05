@@ -10,28 +10,32 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the week-7 stage (report statistics, baselines, leakage checks, anomaly detection, band occlusion; on top of `6866791`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). Step 5 (§16) now ends with Gate 2 (§16.6), the RUL runs (§16.7) and the baselines with the physics check (§16.8: one CPU job, four PatchTST GPU jobs, one explain job) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2, RUL and the baselines with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
+| 1 | Commit and push this pass (channel descriptions, nested model selection, causal XJTU-SY baseline; on top of `e269b1d`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). Step 5 (§16): tuning is now nested (8 configurations × 20 inner splits per dataset, up to 8 h per job), and the Plan B and Gate-2 test runs take each fold's own choices (`--per-fold`); then RUL (§16.7) and the baselines with the physics check (§16.8) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2, RUL and the baselines with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
 | 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
 | — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs), `3103e5e` and `e269b1d` (week 7); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
-## 1. Commit and push the week-7 stage
+## 1. Commit and push this pass
 
-New since `6866791`: `pdmfm/report.py` (paired tests over units, Holm), `pdmfm/baselines.py`
-(gradient boosting, probes, PatchTST from scratch), `pdmfm/leakage.py`, `pdmfm/anomaly.py`,
-`pdmfm/explain.py` (band occlusion, physics score), their five test files, small changes in
-`arms.py`, `planb.py`, `rul.py`, `metrics.py`, `slurm/status.sh`, import guards in
-`tests/test_encoders.py`, and the docs (`PROJECT_LOG.md`
-week 7, the plan's amendments, the runbook's §16.8, `docs/CI.md`, `README.md`, this file).
+`e269b1d` (committed while this pass was in progress) already holds most of its code: the
+channel descriptions (`pdmfm/sensors.py`) with the channel and position embeddings, and the
+nested selection in `tune.py`, `gate2.py`, `planb.py` and `probe.py`. Still to commit: the
+merged `--per-fold` files and Plan B's own recipe in Gate 2's per-fold choices (`planb.py`,
+`gate2.py`), the causal XJTU-SY baseline (`model/inputs.py`), four lines that fresh
+environments' pandas stubs flagged (`tune.py`, `gate2.py`), test updates (`test_fusion`,
+`test_gate2`, `test_inputs`, `test_planb`, `test_probe`) and the docs (`PROJECT_LOG.md`,
+`README.md`, the plan's amendments, the runbook's §16.2, §16.3 and §16.6, `docs/CI.md`, this
+file). Plan B runs made before this pass cannot be resumed by the new code (their settings
+key differs): give new runs new run ids, as the runbook's `-v1` ids already are.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
 git status -sb
 git add -A
-git commit -m "Week 7: report statistics, baselines, leakage checks, anomaly detection, physics score"
+git commit -m "Channel descriptions, nested model selection, causal XJTU-SY baseline"
 git push
 ```
 
@@ -65,7 +69,8 @@ show. In short:
    their feature jobs.
 5. **Step 4 (§15):** the Gate-1 probe on all four tasks.
 6. **Step 5 (§16): Plan B, Gate 2 and RUL.** Read the Gate-1 winner with the §16.1 lines,
-   tune each dataset on its validation units (§16.2), then submit the §16.3 loop: Nonastreda,
+   tune each dataset by nested cross-validation (§16.2; up to 8 h per job), then submit the
+   §16.3 loop, which scores each fold with its own tuned settings (`--per-fold`): Nonastreda,
    MATWI, XJTU-SY and Paderborn with the winner and with the handcrafted reference, plus a
    photo-free Nonastreda run. Check Paderborn's temperature as §16.4 says. Then the Gate-2
    loop (§16.6: Nonastreda, MATWI, Paderborn; a few hours per job) and its test-unit run, and
@@ -198,8 +203,8 @@ Queued experiments (protocols fixed in `PROJECT_LOG.md`, week 7, "Queued experim
 - **E1. Task-specific adapters** (your question, 2026-11-03): single-task against joint Plan B
   on Nonastreda and MATWI; adapters or loss weights only if the tasks interfere, adopted by
   the Gate-2 rule; the class derived from the wear prediction reported in every case.
-- **E2. Sensor-type and sampling-rate embeddings**: required before cross-dataset
-  pretraining (stage 6); today's channel embedding is positional within each dataset.
+- **E2. Sensor-type and sampling-rate embeddings: done (2026-11-05)**, with token positions;
+  validated in `PROJECT_LOG.md`, "Week 7, continued".
 
 Carried forward:
 - **Cross-tool generalization is the limit on both milling sets** (training macro-F1 0.93

@@ -15,7 +15,9 @@ with the window store's manifest:
   force expert (PROJECT_LOG.md, week 5), although Fx and Fy means follow flank wear across
   passes (Spearman ±0.67).
   Baselines: Nonastreda, the tool's first pass; XJTU-SY, the bearing's first 10
-  snapshots; CWRU, the normal recording at the same load (Gate 1 and pretraining only);
+  snapshots, causally (a snapshot among them gets the median of those up to itself, so no
+  snapshot sees a later one); CWRU, the normal recording at the same load (Gate 1 and
+  pretraining only);
   Paderborn, the healthy *training* bearings at the same setting, so it depends on the fold
   (``train_units``). Each uses only the unit's healthy start or training units, so it is
   available at prediction time. KAIST's baseline is its support set's normal windows
@@ -178,7 +180,21 @@ def baseline_groups(
     raise NotImplementedError(f"no level baseline rule for {dataset} yet")
 
 
-def _relative(values: np.ndarray, keys: np.ndarray, reference: np.ndarray, dataset: str):
+# Datasets whose reference windows are separate bags in time order (XJTU-SY snapshots): the
+# baseline of a reference window uses only the reference windows up to it. Nonastreda's and
+# MATWI's reference is one bag (the first pass or cut), predicted after it ends.
+CAUSAL_ORDER = {"xjtu_sy": "meta_minute"}
+
+
+def _relative(
+    values: np.ndarray,
+    keys: np.ndarray,
+    reference: np.ndarray,
+    dataset: str,
+    order: np.ndarray | None = None,
+):
+    """``values`` minus the median of the reference rows of each row's group. With
+    ``order``, a reference row's median uses only the reference rows not later than it."""
     out = np.empty_like(values, dtype=np.float32)
     for key in np.unique(keys):
         members = keys == key
@@ -188,7 +204,16 @@ def _relative(values: np.ndarray, keys: np.ndarray, reference: np.ndarray, datas
         with warnings.catch_warnings():  # a channel missing in every reference row stays NaN
             warnings.simplefilter("ignore", RuntimeWarning)
             out[members] = values[members] - np.nanmedian(values[rows], axis=0)
+            if order is not None:
+                for row in rows:
+                    earlier = rows[order[rows] <= order[row]]
+                    out[row] = values[row] - np.nanmedian(values[earlier], axis=0)
     return out
+
+
+def _order(store: WindowStore) -> np.ndarray | None:
+    column = CAUSAL_ORDER.get(store.dataset)
+    return None if column is None else store.manifest[column].to_numpy(dtype=float)
 
 
 _MEANS: dict[str, np.ndarray] = {}
@@ -217,7 +242,9 @@ def absolute_levels(store: WindowStore, with_mean: bool = False) -> np.ndarray:
 def relative_levels(store: WindowStore, train_units=None, with_mean: bool = False) -> np.ndarray:
     """Level descriptors minus the median of the row's reference windows."""
     keys, reference = baseline_groups(store.dataset, store.manifest, train_units)
-    return _relative(absolute_levels(store, with_mean), keys, reference, store.dataset)
+    return _relative(
+        absolute_levels(store, with_mean), keys, reference, store.dataset, _order(store)
+    )
 
 
 def level_names(family: str, mode: str, force_mean: bool = False) -> list[str]:
@@ -233,7 +260,7 @@ def relative_slow(store: WindowStore, train_units=None) -> np.ndarray:
     """(N, S, 2) slow-channel mean and slope minus the median of the reference windows;
     NaN where the channel is missing."""
     keys, reference = baseline_groups(store.dataset, store.manifest, train_units)
-    return _relative(store.slow, keys, reference, store.dataset)
+    return _relative(store.slow, keys, reference, store.dataset, _order(store))
 
 
 def _sensor_modalities(

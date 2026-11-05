@@ -2,12 +2,12 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-11-01)
+## Status at a glance (updated 2026-11-05)
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. Week 7: the report statistics (paired tests over units, Holm), sensor-only baselines, leakage checks, anomaly detection and the physics score are built and run locally. The full Gate 2, the GPU caches, the GPU baselines and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
-| Tests | See "Week 7" below for the counts; lint, format, pyright and pre-commit clean |
+| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. Week 7: the report statistics (paired tests over units, Holm), sensor-only baselines, leakage checks, anomaly detection and the physics score are built and run locally; channels are now described in one cross-dataset vocabulary (E2) and model selection is nested; nothing blocks the pretraining code. The full Gate 2, the GPU caches, the GPU baselines and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
+| Tests | See "Week 7, continued" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, MATWI, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda, MATWI. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (your Kaggle download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
@@ -163,6 +163,9 @@ Week 2 (Nov 2-8, plan):
 | 2026-11-01 | Anomaly kNN on the cached features as they are | Centring on a 10-window support made the vectors orthogonal (checked on source datasets only) |
 | 2026-11-01 | Band occlusion by line removal, on the raw and the envelope-order axes; physics probe on CWRU | Zeroing a band feeds the encoder an input it never saw; bearing lines live in the envelope |
 | 2026-11-01 | MATWI's context counts as informative | Its 8 cutting conditions predict the wear class above the majority (+0.18 [0.05, 0.33]) |
+| 2026-11-05 | Channel embeddings from physical descriptions (`pdmfm.sensors`), plus token positions | One token space across datasets (E2); no cost on Nonastreda or XJTU-SY |
+| 2026-11-05 | Nested model selection: each outer fold's own choices score its test units (`--per-fold`); pooled choices only for the final model | Fold k's validation group is fold k+1's test group |
+| 2026-11-05 | XJTU-SY level baseline made causal | Snapshots 1-9 were compared with later ones |
 
 ## Week 1, continued (2026-10-26): data layer, EDA, CI
 
@@ -1207,3 +1210,178 @@ of the stage-6 work.
 | New tests | `test_explain` (14: line removal, physics masks, PAS, a BPFO-line model on both axes, randomized weights near chance, deletion order, online features equal the cache, the run), `test_anomaly` (13: score values, metrics, alarms, the target lock, support never in the test set, a spectral fault RMS misses, onset near the FPT), `test_report` (9: Holm, Wilcoxon, sufficient statistics equal the metrics, a better method found and a copy not, seeds averaged, alignment and label check, RUL after-FPT table, command line), `test_baselines` (10: line prominence, feature blocks, Plan B's layout for both tasks, resume, RUL probe beats the mean, per-fold Paderborn baseline, selection never reads test units, PatchTST from scratch, refusals, the report across runs), `test_leakage` (6: one context carries nothing, a context naming the class is flagged, regression-only datasets, the identity probe and target refusal, channel averaging, the run); RUL summary title; status script (Linux) |
 | Real-data runs (laptop) | Physics check on CWRU (Mantis F + E, handcrafted F + E; 82 windows each); anomaly on CWRU and XJTU-SY; gradient boosting on Nonastreda, MATWI, XJTU-SY; probes on the same three; a 1-fold PatchTST CPU check; leakage checks; three paired reports (`runs/report/*-week7/`) |
 | CPU | `pdmfm.resources` before every heavy job; threads capped at 2-4; RAM free 2.5-4 GB throughout (desktop applications), every job below 2 GB |
+
+## Week 7, continued (2026-11-05): channel descriptions, nested selection, readiness for pretraining
+
+Your requests: close the channel-embedding gap (E2) and check that the change does what it is
+for; re-audit the code for other inconsistencies; check that the pretraining code can be
+built now; make sure the cross-validation chooses hyperparameters without leakage; explain
+how the unseen datasets will be tested.
+
+### E2 closed: tokens carry what their channel physically is
+
+| Before | Now |
+| --- | --- |
+| A channel embedding indexed by the channel's position in its dataset (channel 0: CWRU's drive-end accelerometer, Nonastreda's Fx, MATWI's Fx) | `pdmfm/sensors.py`: every channel of every dataset described in one vocabulary (family, axis, location class, site, model sampling rate, window length), checked against the readers; `ChannelEmbedding` builds the vector from the description, with no per-dataset table |
+| Photo tokens used channel 0, so they carried the first sensor's embedding (Fx on Nonastreda) | Photo tokens have their own `image` entry |
+| No position embedding: a channel's 6 T tokens were an unordered set, though the plan's masked modelling keeps each hidden token's "position and type embeddings" | A position embedding: a T token's time slot, a photo token's grid cell |
+| Rate and token duration invisible (a T segment is 43 ms at 12 kHz and 512 ms at 1 kHz; an F bin 9.8 Hz or 0.98 Hz) | The scale (log10 rate, log10 window) enters every channel vector |
+
+Design choices, with their reasons:
+
+- **Location classes, not each reader's placement name:** drive end, fan end, housing,
+  housings A and B and the bearing module are all `bearing_housing`; the motor phase is
+  `motor`; the dynamometer `table`; then `spindle` and `machine`. The **site** (the
+  channel's rank among the dataset's channels of the same family, axis and location) keeps
+  two such channels of one dataset apart (CWRU's fan end is site 1, KAIST's second
+  temperature too), and the code refuses a dataset in which two channels would share a
+  description.
+- **Balance at initialization:** the four parts are averaged (sum / 2, so the unit variance
+  of the single embedding they replace is kept), the scale map starts at zero (rate is
+  constant within one dataset; it becomes informative only across datasets), and the
+  position embedding starts small (std 0.02, as in ViT).
+- **Settings key:** `channel_embedding: semantic-v1` and the descriptions are part of every
+  run's settings, so a run with the old embedding is never resumed by mistake.
+
+Does it serve its purpose? `tests/test_sensors.py` (25 tests, 2 skipped for Paderborn and
+PHM 2010 data):
+
+- the catalogue matches the five synthetic readers and the **real** readers of CWRU, KAIST,
+  XJTU-SY, Nonastreda and MATWI;
+- descriptions are unique within every dataset;
+- physically identical channels get **identical vectors across datasets** (XJTU-SY's
+  horizontal and KAIST's housing-A x accelerometers; Nonastreda's and MATWI's Fx, Fy, Fz),
+  and different sensors different ones;
+- the model's output **does not change when the channels are numbered in another order**
+  (the descriptions move with the tokens), and **does change when two descriptions are
+  swapped**; the old positional embedding failed the first;
+- the sampling rate separates otherwise identical channels once the scale map has learned,
+  and gradients reach it.
+
+Real data, same settings as before, 5 outer folds × 3 seeds, paired over test units
+(`pdmfm.report`):
+
+| Dataset (Mantis) | Metric | Positional embedding | Channel descriptions | Difference [95 %] | Units better | Wilcoxon p |
+| --- | --- | --- | --- | --- | --- | --- |
+| Nonastreda, F + photos | bag macro-F1 | 0.802 | 0.818 | +0.017 [0.000, +0.035] | 6/10 tools | 0.13 |
+| Nonastreda | wear RMSE (µm) | 25.8 | 25.2 | −0.65 [−1.51, −0.02] | 5/10 | 0.49 |
+| XJTU-SY, F + E | RUL RMSE, pooled (bearing average) | 0.183 (0.207) | 0.180 (0.180) | −0.002 [−0.023, +0.005] | 12/15 bearings | 0.013 |
+| XJTU-SY | RUL RMSE after FPT, pooled (bearing average) | 0.315 (0.287) | 0.322 (0.264) | +0.006 [−0.035, +0.020] | 11/15 | 0.07 |
+
+The new embedding costs nothing on either dataset and is better per bearing on XJTU-SY
+(`runs/planb/e2-nona-mantis-F`, `e2-xjtu-mantis-FE`; reports in `runs/report/e2-*`). The
+causal XJTU-SY baseline (below) was measured separately, after this comparison, so each
+change is judged alone: RUL RMSE 0.180 → 0.174 pooled (−0.006 [−0.017, +0.015]), 0.180 →
+0.189 per bearing (4/15 better, p = 0.08), after FPT 0.322 → 0.305: no significant change
+either way, as expected for a correction that touches 150 of 9,216 snapshots, all in the
+healthy phase (`runs/planb/e2c-xjtu-mantis-FE`).
+
+A synthetic learning test failed after the change and was examined rather than relaxed:
+C2F's fused head on 50 synthetic training cuts is bimodal by seed with either embedding
+(0.18-0.31 or about 0.6 of the training mean's error; seeds 0-9: 2 near 0.6 with the old
+embedding, 5 with the new, Fisher p = 0.35), while the combined estimate is stable (0.17-0.27
+in all 20 runs). The test now checks the median of 3 seeds; Gate 2 on real data decides
+about C2F.
+
+### Cross-validation: model selection made nested
+
+**Finding.** Fold k's inner-validation group is fold k+1's test group. `pdmfm.tune` chose one
+configuration from the mean over the folds' validation scores, Gate 2 pooled its 20 inner
+splits into one decision, and Gate 1 one winner: each choice was informed by every fold's
+test units through the other folds. No weights were ever fitted on test units, but the
+in-domain test estimates were mildly optimistic (selection bias; Cawley and Talbot, JMLR
+2010). The held-out targets were never involved.
+
+**Fix.**
+
+| Choice | Now |
+| --- | --- |
+| Hyperparameters (`pdmfm.tune`) | Scored on the 4 inner splits of each outer fold; `per_fold` (each fold's own choice, from its own splits only) and `chosen` (over all 20 splits, for the final model) |
+| Fusion stage (Gate 2) | The rule applied within each outer fold over its own 4 splits (`per_fold` in `decision.json`), next to the pooled decision |
+| Test runs (`pdmfm.planb --per-fold`) | Fold k trains with fold k's own choices (tune's, then Gate 2's, merged in that order): the nested, unbiased in-domain estimate |
+| Encoder (Gate 1) | The winner per outer fold from that fold's validation splits (and CWRU's): `per_fold_winner`, `per_fold_agreement`. On the laptop run all 5 folds pick `mantis:F`, the pooled winner, so there is no selection bias there |
+| Baselines (`pdmfm.baselines`) | Already per fold (each fold's grid chosen on its own validation units) |
+| Epochs, temperature, interval scale | Already per fold, on the fold's validation units |
+| RUL history (week 6) | Still chosen once over folds; it was not adopted, so nothing rests on it |
+
+The final model for pretraining and the held-out targets still uses the pooled choices: all
+source units may inform it, and no target unit does.
+
+### Other findings of the re-audit
+
+| Finding | Fix |
+| --- | --- |
+| XJTU-SY's level baseline was the median of each bearing's first 10 snapshots, so snapshots 1-9 were compared with later ones (a look-ahead of at most 9 minutes, in the healthy phase) | An expanding median: a reference snapshot uses only the reference snapshots up to it (`CAUSAL_ORDER`); later snapshots as before. Nonastreda's and MATWI's reference is one bag (the first pass or cut), predicted after it ends, so it stays |
+| `planb.run` had a local variable named like the new `per_fold` argument (caught by pyright before any run) | Renamed |
+| Every `python -m pdmfm...` command in the docs checked against its parser | Every documented flag exists |
+
+### Readiness for the pretraining code (stage 6)
+
+| Requirement (plan, "Self-supervised pretraining") | State |
+| --- | --- |
+| What fold k may see: no target, none of fold k's test or inner-validation units | `protocols.pretraining_mask`, tested |
+| One token space across datasets | **Done now** (E2: descriptions, positions) |
+| Masked modelling: masked tokens keep their position and type; frozen targets | Positions **done now**; targets are the cached tokens; level tokens need their own mask (today they are always present): part of the build |
+| Cross-modal contrastive pairs | Modality pairs through the presence masks; channel views (CWRU drive end ↔ fan end, XJTU-SY horizontal ↔ vertical) through token masks: part of the build |
+| Negatives from other units of the same dataset | Every row carries its unit and dataset |
+| Text anchoring | Prototype heads exist per dataset; one shared projection W_q with per-dataset prototypes: part of the build |
+| Sampling datasets ∝ √n, units balanced; per-dataset standardization of level and slow tokens; collapse monitor; checkpoint on inner-validation units | Part of the build (the fit loop's selection pattern exists) |
+| Both Gate-2 outcomes | The losses read the experts' token embeddings and summaries (Plan B) and, when present, the fusion stage's output: one interface for both |
+
+Verdict: nothing blocks the build; what remains is the build itself (5-7 days, up from 4-6
+for the multi-dataset wrapper). It needs the Gate-1 winner's caches of all source datasets
+(Ruche §13) to run, not to be written.
+
+### How the unseen datasets will be tested (stage 8)
+
+Three datasets are held out from everything before stage 8: KAIST, Paderborn's real-damage
+bearings and PHM 2010. No pretraining run, gate, tuning, checkpoint, baseline grid or
+calibration reads them (`protocols.TARGETS` and `pretraining_mask`; `pdmfm.anomaly` and
+`pdmfm.leakage` refuse them without `--final`; the physics probe reads CWRU only). The only
+target data touched so far is metadata: the KAIST manifest's recording counts (week 7).
+
+| Target | What shifts | Support (what the model may learn from) | Test |
+| --- | --- | --- | --- |
+| KAIST, 15 classes | A new machine and sensor set (4 accelerometers, current, temperature), two fault types never seen in the sources (misalignment, unbalance) | k ∈ {1, 5, 10} windows per class from the 0 and 2 Nm recordings, 5 draws (`protocols.kaist_target`, `few_shot`); zero-shot: no fault example, 10 healthy windows only, for the level baseline | Every 4 Nm window. The same specimens run at every load, so this is a condition shift, said with every result |
+| Paderborn real damage | Artificial damage (sources) → damage grown in accelerated lifetime tests | One bearing per class (healthy from K004-K006) with k windows each; the bearings are redrawn in each of the 5 draws (`protocols.paderborn_target`) | Every other real-damage bearing and the remaining healthy ones |
+| PHM 2010 flank wear | A new milling machine, material and cutter; 50 kHz signals | k ∈ {10, 50, all} labelled cuts from two of the three labelled cutters (`protocols.phm2010_fold`) | Every cut of the third cutter, in 3 folds (c1, c4, c6) |
+
+How a prediction is made, from the least to the most adaptation (recipes fixed before any
+target is touched, chosen on a pseudo-target: Paderborn's artificial-damage validation
+bearings):
+
+1. **Zero-shot:** nothing trains. The target's classes are written as fault descriptions
+   (`pdmfm/texts/kaist.yaml`, ...), embedded by Qwen and compared with the backbone's output;
+   misalignment and unbalance are recognized only through their text. The new channel
+   descriptions are what make this meaningful: KAIST's housing accelerometers, its motor
+   current and its temperatures are described in the vocabulary the backbone learned from
+   CWRU, XJTU-SY and Paderborn.
+2. **Linear probe:** the text projection, the logit scale and the NIG head train on the
+   support set (300 steps, cached features).
+3. **LoRA:** rank 8 on the sensor encoder's last 4 blocks, with the adapters and the fusion
+   stage trained (online encoding of at most 150 support windows).
+4. **Full fine-tuning:** everything except the text tower.
+
+There is no early stopping (a k-shot support set leaves nothing to validate on): the step
+count is fixed on the pseudo-target. Temperature scaling uses the support set when k ≥ 5.
+Level tokens are relative to the target's own healthy support windows (KAIST: its normal
+support windows; Paderborn: the drawn healthy bearing), never to test windows.
+
+What is reported: macro-F1, balanced accuracy and ECE (KAIST, Paderborn; zero-shot accuracy
+on the unseen fault types), RMSE, MAE and 90 % interval coverage in µm (PHM 2010); mean ± std
+over the 5 draws and 3 seeds; paired tests against the best baseline over the draws (the
+baselines of every table, fitted on the same support set), Holm-corrected; anomaly detection
+from healthy support only (`pdmfm.anomaly --final`), with the support also drawn from other
+recordings than the healthy test windows (improvement 7). Each target is run once, after
+every choice is final.
+
+### Verification of this pass
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | **512 passed, 29 skipped, 0 failed** (skipped: 18 Linux-only SLURM, 5 network, 6 waiting for the Paderborn and PHM 2010 data) |
+| Fresh environments (`run_local_ci.sh`, as CI) | **478 passed, 59 skipped** on Python 3.11 and 3.12, coverage 88 %, pyright **0 errors** after 4 lines that only the fresh environments' pandas stubs flag were rewritten through NumPy |
+| ruff, pyright `pdmfm`, pre-commit | Clean; pyright **0 errors** (it caught the `per_fold` name clash in `planb.run` before any run) |
+| New and changed tests | `test_sensors` (27: catalogue against the synthetic readers and 5 real readers, uniqueness, identical vectors across datasets, order invariance, sensitivity to descriptions, the scale, photo entry and positions); `test_tune` rewritten for nested search (7: inner splits, never an outer test unit, every non-test unit validated once, each fold's own choice, near-ties, old results refused, `choose`); Gate 2 per-fold decision (1, plus the search test); Plan B `--per-fold` with merged files and refusals (1); Gate 1 per-fold winners (1); causal XJTU-SY baseline (1); hand-built inputs must describe their channels (an existing test, extended); the synthetic learning test now judges medians over 3 seeds |
+| Real data | Plan B reruns with the new embedding on Nonastreda and XJTU-SY (5 folds × 3 seeds each) and the causal-baseline run, compared pairwise above |
+| CPU | `pdmfm.resources` before each heavy job; threads capped at 1-4 |

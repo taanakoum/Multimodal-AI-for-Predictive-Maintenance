@@ -568,20 +568,22 @@ def run(
     return out
 
 
-def load_per_fold(path: Path) -> dict[int, dict]:
-    """Outer fold -> TrainConfig overrides from a ``best.json`` (pdmfm.tune) or a
-    ``decision.json`` (pdmfm.gate2)."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if "per_fold" not in data:
-        raise ValueError(f"{path} holds no per-fold choices (made before nested selection)")
+def load_per_fold(*paths: Path) -> dict[int, dict]:
+    """Outer fold -> TrainConfig overrides from ``best.json`` files (pdmfm.tune) and
+    ``decision.json`` files (pdmfm.gate2), merged in order (a later file wins on an option
+    both set: tune's settings, then Gate 2's fusion choice)."""
     allowed = set(TrainConfig.__dataclass_fields__)
-    out = {}
-    for fold, entry in data["per_fold"].items():
-        overrides = dict(entry["overrides"])
-        unknown = set(overrides) - allowed
-        if unknown:
-            raise ValueError(f"{path}: fold {fold} sets unknown options {sorted(unknown)}")
-        out[int(fold)] = overrides
+    out: dict[int, dict] = {}
+    for path in paths:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if "per_fold" not in data:
+            raise ValueError(f"{path} holds no per-fold choices (made before nested selection)")
+        for fold, entry in data["per_fold"].items():
+            overrides = dict(entry["overrides"])
+            unknown = set(overrides) - allowed
+            if unknown:
+                raise ValueError(f"{path}: fold {fold} sets unknown options {sorted(unknown)}")
+            out.setdefault(int(fold), {}).update(overrides)
     return out
 
 
@@ -919,7 +921,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--per-fold",
         type=Path,
-        help="best.json (pdmfm.tune) or decision.json (pdmfm.gate2): each fold's own choice",
+        nargs="+",
+        help="best.json (pdmfm.tune) and/or decision.json (pdmfm.gate2), merged in this order: "
+        "each fold's own choices",
     )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", type=Path, help="results folder (default: runs/planb)")
@@ -960,7 +964,7 @@ def main(argv: list[str] | None = None) -> None:
         without=tuple(args.without),
         levels=args.levels,
         force_mean=args.force_mean,
-        per_fold=load_per_fold(args.per_fold) if args.per_fold else None,
+        per_fold=load_per_fold(*args.per_fold) if args.per_fold else None,
     )
     print(f"[planb] done in {time.perf_counter() - started:.0f} s -> {out}")
 

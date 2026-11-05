@@ -96,6 +96,31 @@ def test_xjtu_and_cwru_level_baselines(root):
         I.baseline_groups("phm2010", cwru.manifest)
 
 
+def test_xjtu_levels_never_use_a_later_snapshot(root):
+    """A bearing's first 10 snapshots are its healthy reference; each of them is compared with
+    the median of the reference snapshots up to itself (its first is 0), and every later
+    snapshot with the median of all 10. Changing a later snapshot changes no earlier level."""
+    xjtu = store(root, "xjtu_sy")
+    manifest = xjtu.manifest
+    levels = I.relative_levels(xjtu)
+    absolute = np.asarray(xjtu.levels, dtype=np.float64)
+    rows = manifest.index[manifest["unit"] == "Bearing1_1"].to_numpy()
+    rows = rows[np.argsort(manifest.loc[rows, "meta_minute"].to_numpy())]
+    np.testing.assert_allclose(levels[rows[0]], 0.0, atol=1e-6)
+    np.testing.assert_allclose(
+        levels[rows[4]], absolute[rows[4]] - np.median(absolute[rows[:5]], axis=0), atol=1e-5
+    )
+    np.testing.assert_allclose(
+        levels[rows[20]], absolute[rows[20]] - np.median(absolute[rows[:10]], axis=0), atol=1e-5
+    )
+    changed = np.array(xjtu.levels, copy=True)
+    changed[rows[9]] += 100.0  # the 10th snapshot: earlier ones must not move
+    xjtu.levels = changed
+    again = I.relative_levels(xjtu)
+    np.testing.assert_allclose(again[rows[:9]], levels[rows[:9]], atol=1e-6)
+    assert not np.allclose(again[rows[20]], levels[rows[20]])
+
+
 def test_a_group_without_reference_windows_is_an_error(root):
     s = store(root, "cwru")
     s.manifest = s.manifest.assign(class_key=s.manifest["class_key"].replace("normal", "ball"))

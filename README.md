@@ -68,7 +68,7 @@ python -m pdmfm.features texts                                   #    Qwen3 cont
 python -m pdmfm.patchtst --fold 1 --device cuda                  #    own PatchTST, per outer fold (Ruche)
 python -m pdmfm.probe --run-id gate1 --candidates mantis:T mantis:T+E moment:T ...   # 3: Gate 1
 python -m pdmfm.tune --dataset nonastreda --encoder mantis --arms F --run-id tune-nona --grid lr=3e-4,1e-3 d=128,256
-python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona     # 4: Plan B
+python -m pdmfm.planb --dataset nonastreda --encoder mantis --arms F --run-id planb-nona --per-fold runs/tune/tune-nona/best.json   # 4: Plan B
 python -m pdmfm.gate2 --dataset nonastreda --encoder mantis --arms F --run-id gate2-nona     # 5: Gate 2
 python -m pdmfm.rul --encoder mantis --arms F E --run-id rul-xjtu --compare runs/planb/<run>  #    RUL from past snapshots
 python -m pdmfm.baselines --method gbm --dataset nonastreda --run-id gbm-nona   # sensor-only baselines (gbm, probe, patchtst)
@@ -84,6 +84,9 @@ python -m pdmfm.features status                                  # what is cache
   sentence. Milling windows (Nonastreda, MATWI) also get the previous pass's or cut's photos.
 - **Stage 2.** Feature caches are keyed by the store, the encoder checkpoint and the arm, so
   they are never mixed, and they resume after an interruption.
+- **Channels.** Every channel is described in one vocabulary shared by all datasets
+  (`pdmfm.sensors`: sensor type, axis, location, sampling rate); the model embeds the
+  description, so the same kind of sensor means the same thing in every dataset.
 - **Splits.** All splits are by physical unit (`pdmfm.protocols`).
 - **Stage 3.** Gate 1 ranks encoder-and-arm candidates over its four tasks on
   inner-validation units only.
@@ -94,7 +97,8 @@ python -m pdmfm.features status                                  # what is cache
   outer folds × 3 seeds, with per-modality, missing-modality, stale-photo and baseline
   results, the fit on the training units, and pooled out-of-fold estimates with 95 %
   intervals from resampling test units (`runs/planb/<run-id>/summary.md`).
-  `pdmfm.tune` chooses hyperparameters on the inner-validation units only. Every table also
+  `pdmfm.tune` chooses hyperparameters by nested cross-validation: each outer fold's own
+  choice comes from its inner splits and scores its test units (`--per-fold`). Every table also
   has a schedule baseline (the class and target at the same pass, cut or snapshot number) and,
   for the wear classes, ordinal metrics.
 - **Stage 5 (Gate 2).** Four fusion candidates (concat, Perceiver, MBT, C2F) on Plan B's

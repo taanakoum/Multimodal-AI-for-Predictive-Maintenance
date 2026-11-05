@@ -97,6 +97,12 @@ def choose(table: pd.DataFrame) -> tuple[str, pd.DataFrame]:
     return str(chosen), ranking
 
 
+def _mean_of(ranking: pd.DataFrame, config: str) -> float:
+    """The mean validation score of ``config`` in a ranking."""
+    means = ranking["mean"].to_numpy(dtype=float)
+    return float(means[ranking["config"].to_numpy() == config][0])
+
+
 def _flags(params: dict) -> str:
     return " ".join(f"--{k.replace('_', '-')} {v}" for k, v in params.items())
 
@@ -198,7 +204,7 @@ def search(
         per_fold[str(fold)] = {
             "overrides": fold_params,
             "flags": _flags(fold_params),
-            "mean": float(fold_ranking.set_index("config").loc[fold_choice, "mean"]),
+            "mean": _mean_of(fold_ranking, fold_choice),
             "splits": int(table.loc[table["fold"] == fold, "split"].nunique()),
         }
     agreement = float(np.mean([v["overrides"] == params for v in per_fold.values()]))
@@ -208,8 +214,8 @@ def search(
         "encoder": encoder,
         "arms": list(arm_list),
         "chosen": params,
-        "best_mean": float(ranking["mean"].max()),
-        "chosen_mean": float(ranking.set_index("config").loc[chosen, "mean"]),
+        "best_mean": float(np.max(ranking["mean"].to_numpy(dtype=float))),
+        "chosen_mean": _mean_of(ranking, chosen),
         "ranking": ranking.sort_values("mean", ascending=False).to_dict("records"),
         "flags": _flags(params),
         "per_fold": per_fold,

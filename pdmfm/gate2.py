@@ -196,7 +196,7 @@ def search(
             decide(pd.DataFrame(table.loc[table["outer"] == k]), configs), configs
         )  # fmt: skip
         for k in folds
-        if (table["outer"] == k).any()
+        if bool(np.any(table["outer"].to_numpy() == k))
     }
     report["per_fold_agreement"] = float(
         np.mean([v["model"] == report["model"] for v in report["per_fold"].values()])
@@ -311,14 +311,13 @@ OVERRIDES = ("fusion", "lr", "schedule", "input_dropout", "modality_dropout")
 
 
 def per_fold_entry(decision: dict, configs: dict) -> dict:
-    """One outer fold's decision as Plan B overrides (``--per-fold``)."""
+    """One outer fold's decision as Plan B overrides (``--per-fold``). Plan B keeps the
+    recipe of the command line (and of a tune file given before this one): only late fusion
+    is set; a fusion candidate brings the search recipe it was chosen with."""
     model = decision["model"]
     cfg = configs[model]
-    return {
-        "model": model,
-        "overrides": {name: getattr(cfg, name) for name in OVERRIDES},
-        "verdict": decision["verdict"],
-    }
+    overrides = {"fusion": "late"} if model == "planb" else {n: getattr(cfg, n) for n in OVERRIDES}
+    return {"model": model, "overrides": overrides, "verdict": decision["verdict"]}
 
 
 def _markdown(report: dict) -> str:

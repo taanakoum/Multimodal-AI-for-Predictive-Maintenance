@@ -101,6 +101,28 @@ def test_ties_go_to_the_cheaper_encoder():
     assert summary.loc[summary["candidate"] == "stats:F", "mean_rank"].isna().all()
 
 
+def test_each_outer_fold_gets_its_own_winner():
+    """Fold k's winner uses fold k's validation splits and CWRU's, never another fold's."""
+    rows = []
+    for fold, (a, b) in ((1, (0.9, 0.6)), (2, (0.6, 0.9))):
+        for name, score in (("mantis:F", a), ("moment:T", b)):
+            rows.append(
+                {
+                    "task": "nonastreda",
+                    "split": f"nonastreda-fold{fold}",
+                    "candidate": name,
+                    "is_candidate": True,
+                    "balanced_accuracy": score,
+                }
+            )
+    for name in ("mantis:F", "moment:T"):  # CWRU: a tie, in every fold
+        rows.append({"task": "cwru", "split": "cwru-gate1", "candidate": name,
+                     "is_candidate": True, "balanced_accuracy": 0.8})  # fmt: skip
+    winners = probe.per_fold_winners(pd.DataFrame(rows))
+    assert winners == {"1": "mantis:F", "2": "moment:T"}
+    assert probe._fold_of("xjtu_sy-fold4") == 4 and probe._fold_of("cwru-gate1") is None
+
+
 def test_candidate_syntax():
     assert probe.parse_candidate("moment:T+E") == ("moment", ("T", "E"))
     with pytest.raises(ValueError):

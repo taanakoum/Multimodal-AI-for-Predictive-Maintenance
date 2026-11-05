@@ -87,6 +87,18 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   the majority (+0.18 macro-F1 [0.05, 0.33], `pdmfm.leakage`): a model that reads MATWI's
 >   context must be compared with the context-lookup baseline, and text anchoring ablates the
 >   context token there.
+> - (2026-11-05) The sensor-type, axis and sampling-rate embeddings are implemented as
+>   channel descriptions (`pdmfm.sensors`: family, axis, location class, site, model rate,
+>   window length; checked against the readers), embedded without any per-dataset index, plus
+>   a token position embedding (time slot, photo grid cell). Photo tokens have their own
+>   `image` entry. Physically identical channels get identical vectors across datasets.
+> - (2026-11-05) Model selection is nested: tuning and Gate 2 decide within each outer fold
+>   from its own inner splits, and each fold's test units are scored with its own choices
+>   (`planb --per-fold`); Gate 1 reports its winner per fold. The pooled choices (all source
+>   units) remain for the final model and the held-out targets. Fold k's validation group is
+>   fold k+1's test group, so the pooled choices are not used for in-domain estimates.
+> - (2026-11-05) XJTU-SY's level baseline is causal: a snapshot among the first 10 uses only
+>   the reference snapshots up to itself.
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or
