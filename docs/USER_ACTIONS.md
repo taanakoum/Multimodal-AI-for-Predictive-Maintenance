@@ -10,32 +10,27 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push this pass (channel descriptions, nested model selection, causal XJTU-SY baseline; on top of `e269b1d`); check that CI is green | Ruche clones the repository from GitHub | 5 min |
-| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`). Step 5 (§16): tuning is now nested (8 configurations × 20 inner splits per dataset, up to 8 h per job), and the Plan B and Gate-2 test runs take each fold's own choices (`--per-fold`); then RUL (§16.7) and the baselines with the physics check (§16.8) | MOMENT, AST and PatchTST caches; Paderborn; the full Gate 1; Plan B, Gate 2, RUL and the baselines with the Gate-1 winner | about 3 h of your time over a few days, the rest is queue and compute |
+| 1 | Commit and push the week-8 write-up (docs only, on top of `a7716ec`, which holds the pretraining code); check that CI is green for `a7716ec` | Ruche clones the repository from GitHub | 5 min |
+| 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), following its **run-order table** (steps 0-8): checks, Paderborn, caches, PatchTST, Gate 1, nested tuning, Plan B, Gate 2, RUL, baselines, then pretraining (§16.9) and fine-tuning from it (§16.10), then the download | Everything from Gate 1 to stage 7 with the winning encoder | about 3-4 h of your time over a few days, the rest is queue and compute |
 | 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
 | — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs), `3103e5e` and `e269b1d` (week 7); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs), `3103e5e` and `e269b1d` (week 7), `07638c0` (channel descriptions, nested selection), `a7716ec` (pretraining); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
-## 1. Commit and push this pass
+## 1. Commit and push the week-8 write-up
 
-`e269b1d` (committed while this pass was in progress) already holds most of its code: the
-channel descriptions (`pdmfm/sensors.py`) with the channel and position embeddings, and the
-nested selection in `tune.py`, `gate2.py`, `planb.py` and `probe.py`. Still to commit: the
-merged `--per-fold` files and Plan B's own recipe in Gate 2's per-fold choices (`planb.py`,
-`gate2.py`), the causal XJTU-SY baseline (`model/inputs.py`), four lines that fresh
-environments' pandas stubs flagged (`tune.py`, `gate2.py`), test updates (`test_fusion`,
-`test_gate2`, `test_inputs`, `test_planb`, `test_probe`) and the docs (`PROJECT_LOG.md`,
-`README.md`, the plan's amendments, the runbook's §16.2, §16.3 and §16.6, `docs/CI.md`, this
-file). Plan B runs made before this pass cannot be resumed by the new code (their settings
-key differs): give new runs new run ids, as the runbook's `-v1` ids already are.
+`a7716ec` holds this week's code: `pdmfm/pretrain.py` (stage 6), fine-tuning from it
+(`planb --init`, stage 7), the model hooks they need, `tests/test_pretrain.py`, the runbook's
+run-order table and §16.9-§16.10, and the status script's pretraining section. Still to
+commit: the week-8 results and the progress review in `PROJECT_LOG.md`, `docs/CI.md` and this
+file.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
-git status -sb
+git status -sb   # PROJECT_LOG.md, docs/CI.md, docs/USER_ACTIONS.md
 git add -A
-git commit -m "Channel descriptions, nested model selection, causal XJTU-SY baseline"
+git commit -m "Week 8: pretraining pilot and progress review"
 git push
 ```
 
@@ -76,9 +71,11 @@ show. In short:
    loop (§16.6: Nonastreda, MATWI, Paderborn; a few hours per job) and its test-unit run, and
    the RUL loop (§16.7, CPU jobs). Then §16.8: the baselines (one CPU job for gradient
    boosting and the probes, one PatchTST GPU job per dataset) and the physics check of the
-   Gate-1 winner (one GPU job); they do not wait for Gate 2.
+   Gate-1 winner (one GPU job); they do not wait for Gate 2. Then §16.9: pretraining on all
+   five source datasets (one job per fold, plus the three loss ablations) and §16.10:
+   Plan B fine-tuned from each fold's own backbone.
 7. **Step 6 (§17):** download the caches and results (now with `runs/planb`, `runs/gate2`,
-   `runs/rul`, `runs/baselines` and `runs/explain`), then tell me. I write up Gate 1, Plan B,
+   `runs/rul`, `runs/baselines`, `runs/explain` and `runs/pretrain`), then tell me. I write up Gate 1, Plan B,
    Gate 2 and RUL from them, with the paired reports, the leakage checks and the anomaly
    tables, which run on the laptop from the downloaded caches.
 
@@ -169,19 +166,20 @@ set (no photos and no wear labels).
 
 ## What comes next (my side)
 
-Where things stand (`PROJECT_LOG.md`, week 7): the report statistics, the sensor-only
-baselines, the leakage checks, anomaly detection and the physics score are built, tested and
-run on the local data. On Nonastreda, Plan B (force + photos) beats every sensor-only
-baseline on all 10 test tools and ties persistence; on XJTU-SY and MATWI the baselines tie
-Plan B. The Mantis-based probe classifies CWRU perfectly without relying on the defect lines
-(physics score 0.96, randomized 1.07); the handcrafted probe does rely on them (1.17).
+Where things stand: stages 0-7 are written and tested; stage 6 (pretraining) was built and
+piloted on the laptop this week (`PROJECT_LOG.md`, week 8, with the full progress review:
+what exists, what is missing, the priorities and how each goal is evaluated). Results from
+Gate 1 onward wait on your Ruche runs.
 
-| When | Stage | What I do locally | What needs Ruche (your step 2) |
+| Order | Work | Needs | Effort |
 |---|---|---|---|
-| Now, until your Ruche results | Gate 2 decision; baselines; reports | Nothing blocks; with the results: the paired reports per dataset, leakage and anomaly tables with MOMENT and the Gate-1 winner | §16.6 (Gate 2), §16.8 (baselines, physics check) |
-| Weeks 8-9 | Pretraining | If a fusion candidate wins: masked latent modelling, cross-modal InfoNCE (force ↔ photo on both milling sets) and text anchoring on the cached tokens, each fold's held-out units excluded. If Plan B stays: the same losses on Plan B's per-modality adapters (the plan's fallback) | The pretraining jobs |
-| Weeks 10-11 | Adaptation (Goal 2) | Few-shot draws, linear probe vs LoRA vs full fine-tuning; targets KAIST, Paderborn real damage, PHM 2010 (or NASA milling, decision A), and MATWI ↔ Nonastreda; the anomaly protocol on KAIST and Paderborn real damage (`--final`) | The sweeps (holiday queue) |
-| Week 12 | Trust and explanations (Goal 3) | Band occlusion on the final model, explanation cards (the physics line only where PAS passes), missing-modality curves, calibration tables | Possibly the occlusion runs |
+| 1 | Stage 8, adaptation (`pdmfm/adapt.py`): zero-shot through the fault descriptions, linear probe, LoRA, full fine-tuning; recipe chosen on Paderborn's artificial-damage validation bearings | Nothing to write; the backbones and Paderborn to run | 6-8 days |
+| 2 | Stage 7 completion: Nonastreda's leave-one-tool-out from a backbone pretrained without Nonastreda | - | about a day |
+| 3 | Stage 11 on the final model: keep the fine-tuned models, band occlusion through Plan B's inputs, explanation cards | - | 3-5 days |
+| 4 | Your Ruche results: Gate 1, Gate 2, pretraining and fine-tuning reports | Step 2 | about a day |
+| 5 | Improvements 1-2 (defect-line tokens, baseline-relative embeddings), ideally before the final pretraining; the evaluation fixes 4, 5, 7; E1 | Your go-ahead | days |
+| 6 | Stage 10 completion (masked-modelling anomaly score, text score; TimesFM) | - | 2-3 days |
+| 7 | Report, figures, release; then writing | All results | 3-4 days, then 2 weeks |
 
 Improvements found this week, for your go-ahead (details and costs in `PROJECT_LOG.md`, week 7):
 

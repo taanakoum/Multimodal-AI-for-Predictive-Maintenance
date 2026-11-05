@@ -364,3 +364,25 @@ def test_plan_b_fine_tunes_each_fold_from_its_own_backbone(root):
         assert result["settings"]["train"]["init"] == template
     manifest = WindowStore.open("nonastreda", paths(root)["window_root"]).manifest
     assert protocols.nonastreda_fold(manifest, 1).test.any()
+
+
+def test_the_backbone_fixes_width_and_head_while_tuning_keeps_the_recipe(root):
+    """Ruche tunes d over {64, 256} from scratch, per dataset and fold; one backbone (d 256)
+    serves every dataset. Fine-tuning takes the backbone's width and head, keeps the tuned
+    learning rate and dropout, and records what ran."""
+    run(root, "pre-two", folds=(1, 2))
+    template = str(root / "runs" / "pre-two" / "fold{fold}-seed{seed}" / "best.pt")
+    messages = []
+    out = planb.run(
+        "nonastreda", "stats", ("T", "F"), "fine-tuned-width", [1], [0],
+        TrainConfig(epochs=1, batch_size=32, d=32, head="projected", init=template),
+        out_root=root / "runs", log=messages.append,
+        per_fold={1: {"d": 16, "lr": 3e-4, "dropout": 0.3}}, **paths(root),
+    )  # fmt: skip
+    train = json.loads((out / "fold1-seed0.json").read_text(encoding="utf-8"))["settings"]["train"]
+    assert (train["d"], train["head"]) == (32, "prototype")
+    assert (train["lr"], train["dropout"]) == (3e-4, 0.3)
+    assert any("from the backbone instead of {'d': 16, 'head': 'projected'}" in m for m in messages)
+    assert any("pretrained tensors loaded" in m for m in messages)
+    unchanged = TrainConfig(d=32, init=template)
+    assert pretrain.architecture(unchanged, 1, 0, log=quiet) == unchanged

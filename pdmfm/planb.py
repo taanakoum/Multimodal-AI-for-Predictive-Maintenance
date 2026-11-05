@@ -50,6 +50,7 @@ from pdmfm import stats as S
 from pdmfm.model.fusion import FUSIONS
 from pdmfm.model.inputs import FOLD_BASELINE, LEVEL_MODES, MAX_PHOTO_LAG, TaskInputs, assemble
 from pdmfm.paths import REPO_ROOT
+from pdmfm.pretrain import architecture
 from pdmfm.train import TrainConfig, bag_mean, fit, predict
 from pdmfm.utils import stable_hash, write_json_atomic
 from pdmfm.windows import WindowStore
@@ -488,7 +489,10 @@ def run(
             if fold not in per_fold:
                 raise ValueError(f"--per-fold has no choice for fold {fold}")
             fold_cfg = replace(cfg, **per_fold[fold])
-            settings = {**settings, "train": fold_cfg.as_dict(), "per_fold": True}
+        if fold_cfg.init:
+            fold_cfg = architecture(fold_cfg, fold, seeds[0], log)
+        if per_fold is not None or fold_cfg != cfg:
+            settings = {**settings, "train": fold_cfg.as_dict(), "per_fold": per_fold is not None}
             key = stable_hash(settings)[:12]
         labelled = any_present.copy()
         if inputs.y_class is not None:

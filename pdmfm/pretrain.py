@@ -774,6 +774,23 @@ def initialize(model: nn.Module, path: str | Path, dataset: str, fold: int | Non
     return {"loaded": loaded, "fold": meta["fold"], "epoch": meta.get("epoch")}
 
 
+ARCHITECTURE = ("d", "head")  # fixed by the backbone: its tensors' shapes and the head type
+
+
+def architecture(cfg: TrainConfig, fold: int, seed: int, log=print) -> TrainConfig:
+    """``cfg`` with the width and head of the backbone it fine-tunes (``cfg.init``). One
+    backbone serves every dataset, so these come from pretraining, not from one dataset's
+    tuning (which may have chosen another width for training from scratch); the training
+    recipe (learning rate, dropout, ...) stays as tuned."""
+    path = Path(cfg.init.replace("{fold}", str(fold)).replace("{seed}", str(seed)))
+    config = torch.load(path, map_location="cpu", weights_only=False)["meta"]["config"]
+    fixed = {name: config[name] for name in ARCHITECTURE if getattr(cfg, name) != config[name]}
+    if fixed:
+        tuned = {name: getattr(cfg, name) for name in fixed}
+        log(f"[pretrain] fold {fold}: {fixed} from the backbone instead of {tuned}")
+    return replace(cfg, **fixed)
+
+
 # ----------------------------------------------------------------------------- command line
 
 

@@ -817,7 +817,10 @@ done
   The main runs use the backbone of the same seed; the ablations, pretrained with seed 0,
   serve all three fine-tuning seeds.
 - If you pretrained a fusion candidate, fine-tune it with the same `--fusion` (and its run id).
-- Each fold's log shows `[pretrain] <dataset>: N pretrained tensors loaded from …`.
+- Each fold's log shows `[pretrain] <dataset>: N pretrained tensors loaded from …`. A fold
+  whose tuning chose `d` 64 also shows `[pretrain] fold k: {'d': 256} from the backbone
+  instead of {'d': 64}`: one backbone serves every dataset, so it fixes the width; the tuned
+  learning rate and dropout stay. Expected, nothing to do.
 - The comparison with Plan B from scratch (§16.3) is mine, after the download: paired over the
   test units with `pdmfm.report`.
 
