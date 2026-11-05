@@ -144,16 +144,20 @@ class LateEvidential(nn.Module):
             levels=self._standardized(f"levels_{name}", part.get("levels")),
             level_channels=getattr(self, f"level_channels_{name}", None),
             age=part.get("age"),
+            hide=part.get("hide"),
+            level_hide=part.get("level_hide"),
+            level_present=part.get("level_present"),
         )
 
     def forward(self, batch: dict[str, dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         """``batch[name]`` holds tokens, present and optionally token_present, levels, age."""
-        evidence, nig, present, attention = [], [], [], {}
+        evidence, nig, present, attention, summaries = [], [], [], {}, []
         for name in self.names:
             part = batch[name]
             encoder = self.encoders[name]
             assert isinstance(encoder, ModalityEncoder)
             z, weights = encoder.pool(*self.embed(name, part))
+            summaries.append(z)
             here = part["present"]
             present.append(here)
             attention[name] = weights
@@ -162,6 +166,7 @@ class LateEvidential(nn.Module):
             if name in self.reg_heads:
                 nig.append(self.reg_heads[name](z))
         out = {"present": torch.stack(present, 1), "attention": attention}
+        out["z"] = torch.stack(summaries, 1)  # (B, M, d) the modality summaries
         if evidence:
             out["evidence"] = torch.stack(evidence, 1)  # (B, M, K)
             out["combined"], out["conflict"] = ds_combine_all(out["evidence"])

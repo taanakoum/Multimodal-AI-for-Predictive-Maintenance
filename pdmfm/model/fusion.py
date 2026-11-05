@@ -175,7 +175,10 @@ class FusionModel(LateEvidential):
         if fusion not in STAGES:
             raise ValueError(f"fusion must be one of {FUSIONS}, not {fusion!r}")
         self.fusion_name = fusion
-        self.stage = STAGES[fusion](self.names, d, dropout)
+        # The stage reads the modalities in this order; a stage shared across datasets
+        # (pretraining) reads every family and gets placeholders for absent ones.
+        self.stage_names = list(self.names)
+        self.stage = STAGES[fusion](self.stage_names, d, dropout)
         self.fused_class_head = (
             None
             if inputs.prototypes is None
@@ -183,26 +186,42 @@ class FusionModel(LateEvidential):
         )
         self.fused_reg_head = None if inputs.y_reg is None else NIGHead(d)
 
+    def use_stage(self, stage: nn.Module, names: list[str]) -> None:
+        """Read ``names`` (a superset of this dataset's modalities) with ``stage``."""
+        missing = set(self.names) - set(names)
+        if missing:
+            raise ValueError(f"the stage does not read {sorted(missing)}")
+        self.stage, self.stage_names = stage, list(names)
+
     def forward(self, batch: dict[str, dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
-        evidence, nig, present, attention, parts = [], [], [], {}, []
+        evidence, nig, present, attention, by_name, summaries = [], [], [], {}, {}, []
         for name in self.names:
             part = batch[name]
             encoder = self.encoders[name]
             assert isinstance(encoder, ModalityEncoder)
             x, token_present = self.embed(name, part)
             z, weights = encoder.pool(x, token_present)
+            summaries.append(z)
             here = part["present"]
             present.append(here)
             attention[name] = weights
-            parts.append((x, token_present, here, z))
+            by_name[name] = (x, token_present, here, z)
             if name in self.class_heads:
                 evidence.append(self.class_heads[name](z) * here.unsqueeze(-1))
             if name in self.reg_heads:
                 nig.append(self.reg_heads[name](z))
         present_all = torch.stack(present, 1)
         anything = present_all.any(1)
-        fused_z = self.stage(parts)
+        first = next(iter(by_name.values()))
+        b, d = first[3].shape
+        absent = (  # a family this dataset lacks: no token, never present
+            first[0].new_zeros(b, 1, d), first[1].new_zeros(b, 1), first[2].new_zeros(b),
+            first[3].new_zeros(b, d),
+        )  # fmt: skip
+        fused_z = self.stage([by_name.get(n, absent) for n in self.stage_names])
         out = {"present": present_all, "attention": attention}
+        out["z"] = torch.stack(summaries, 1)
+        out["fused_z"] = fused_z
         if evidence:
             out["evidence"] = torch.stack(evidence, 1)
             assert self.fused_class_head is not None

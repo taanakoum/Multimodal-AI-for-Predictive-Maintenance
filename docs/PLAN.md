@@ -99,6 +99,18 @@ Oct 23, 2026 · @Mohammad Taan Al Akoum
 >   fold k+1's test group, so the pooled choices are not used for in-domain estimates.
 > - (2026-11-05) XJTU-SY's level baseline is causal: a snapshot among the first 10 uses only
 >   the reference snapshots up to itself.
+> - (2026-11-05) Stage 6 (`pdmfm.pretrain`): one backbone per outer fold shared by every
+>   source dataset (one expert per family, the class heads' text projection W_q per family,
+>   and the fusion stage over all families when Gate 2 picks one); each dataset keeps its
+>   token layout, standardization, prototypes and biases, and regression heads. The
+>   masked-modelling decoder reads only the kept modalities' summaries (and the fused
+>   representation), so hidden content cannot leak into its own prediction. Contrastive
+>   views: CWRU drive end ↔ fan end, XJTU-SY horizontal ↔ vertical, Paderborn vibration ↔
+>   currents, Nonastreda and MATWI force ↔ photos. Batches come from one dataset at a time
+>   (∝ √n), with units balanced. Unlabelled windows (MATWI) enter the self-supervised losses
+>   only. Stage 7 fine-tunes Plan B from fold k's own backbone (`planb --init`; another fold's
+>   is refused). The "no level tokens" and "statistics prompts" ablations are not built; the
+>   context text stays out of the inputs (it carries MATWI's label prior, week 7).
 > - Plan B (stage 4): one expert per channel family (force, vibration, current), one for the
 >   slow channels and one for the photos. Context text is not an expert: it never names the
 >   state, so its opinion would be vacuous. Persistence is the previous bag's true label (or

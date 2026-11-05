@@ -1,6 +1,6 @@
-# Ruche runbook: encoder caches, PatchTST pretraining, Gate 1, Plan B, Gate 2, RUL and baselines
+# Ruche runbook: every run up to stage 7 (caches, Gate 1, Plan B, Gate 2, RUL, baselines, pretraining, fine-tuning)
 
-This runbook finishes stages 2-3 of the plan on **Ruche**, the cluster of the Mésocentre
+This runbook runs stages 2-7 of the plan on **Ruche**, the cluster of the Mésocentre
 Paris-Saclay:
 
 - the feature caches that are too slow for the laptop (MOMENT, AST, your own PatchTST);
@@ -11,7 +11,13 @@ Paris-Saclay:
 - Gate 2, the fusion search by inner cross-validation, on the multimodal datasets
   (Nonastreda, MATWI, Paderborn), and the RUL model that reads past snapshots (XJTU-SY);
 - the sensor-only baselines of every table (gradient boosting on handcrafted features, linear
-  probes, PatchTST trained from scratch) and the physics check of the Gate-1 winner.
+  probes, PatchTST trained from scratch) and the physics check of the Gate-1 winner;
+- stage 6, pretraining one backbone across the source datasets for each outer fold, with its
+  ablations, and stage 7, fine-tuning Plan B (or the Gate-2 winner) from each fold's own
+  backbone and scoring it on the fold's test units.
+
+The **run order** below lists every job in order; each step's section has the commands and
+what its log must show.
 
 It follows the structure and the conventions of the OmniFuser runbook
 (`../OmniFuser/TRAINING_RUNBOOK_RUCHE.md`):
@@ -35,7 +41,7 @@ Ruche** (in the SSH session).
 |---|---|
 | Overview | What runs where · the jobs · before you start · the path at a glance |
 | A: Set up (once) | §1 Laptop · §2 Connect · §3 Storage · §4 Code · §5 Data · §6 Python environment · §7 `slurm/env.sh` · §8 Weights · §9 SLURM scripts |
-| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B, Gate 2, RUL and baselines · §17 Step 6: download |
+| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B (§16.1-16.5), Gate 2 (§16.6), RUL (§16.7), baselines (§16.8), pretraining (§16.9), fine-tuning (§16.10) · §17 Step 6: download |
 | C: Operating | §18 Watch, resume, cancel · §19 Troubleshooting · §20 Rules · §21 Cheat sheet |
 
 ## Overview
@@ -58,20 +64,33 @@ Ruche** (in the SSH session).
 | RUL from past snapshots (XJTU-SY) | Laptop (done with Mantis) or a Ruche CPU job | Minutes per fold; rerun with the Gate-1 winner |
 | Baselines: gradient boosting, Mantis and handcrafted probes; band occlusion, anomaly scores, leakage checks, the paired report | Laptop (done; `PROJECT_LOG.md`, week 7) | Seconds to minutes on cached features |
 | Baselines with the Gate-1 winner, MOMENT and Paderborn; PatchTST from scratch; the physics check of the winner | Ruche (§16.8): CPU job, GPU jobs | Need the full caches; PatchTST trains on raw windows |
+| Pretraining pilot: Mantis F + E on CWRU, XJTU-SY and Nonastreda, 5 folds, then fine-tuning | Laptop (done; `PROJECT_LOG.md`, week 8) | About 11 s per epoch on the CPU |
+| Pretraining on all five source datasets with the Gate-1 winner (5 folds × 3 seeds, ablations), and fine-tuning from it | Ruche GPU (§16.9-§16.10) | Needs MATWI and Paderborn caches, the Gate-1 winner and Gate 2's choice |
 
-### The jobs
+### Run order
 
-| Step | What | Partition | Expected time | Output |
-|---|---|---|---|---|
-| 0 | Tests, stores and caches present; GPU check; network check | `cpu_short`, `gpu_test` | 10-20 min | `runs/logs/` |
-| 1 | Paderborn: fetch (login node), extract, acceptance tests, window store | login, `cpu_short` | 1-3 h download, under 1 h job | `$PDMFM_DATA_ROOT/interim/windows/paderborn` |
-| 2 | Feature caches: handcrafted (CPU), Mantis, MOMENT, AST (GPU) | `cpu_short`, `gpua100` | Minutes to an hour each | `$PDMFM_DATA_ROOT/interim/features/` |
-| 3 | PatchTST pretraining, one model per outer fold, then its features | `gpua100` | Under an hour per fold | `runs/patchtst/fold1..5/` |
-| 4 | Gate-1 probe | `cpu_short` | Under 1 h | `runs/gate1/gate1-v1/` |
-| 5 | Plan B: 5 outer folds × 3 seeds per dataset, with the Gate-1 winner and the handcrafted reference; then Gate 2, RUL and the baselines | `gpua100`, `cpu_short` | Minutes to an hour per Plan B job; a few hours per Gate-2 or PatchTST job | `runs/planb/planb-v1-*/`, `runs/gate2/gate2-v1-*/`, `runs/rul/rul-v1-*/`, `runs/baselines/*-v1-*/`, `runs/explain/pas-v1-*/` |
-| 6 | Download caches and results | laptop | Minutes | `D:\Project14\data\interim\features`, `runs/` |
+Every job, in order. "Needs" is what must be finished first; jobs on one line can run at the
+same time. `bash slurm/status.sh` (§10) shows each step's progress.
 
-The times are estimates. The first job of each kind tells you the real ones (§18).
+| # | Step (section) | Jobs | Partition | Time each | Needs | Done when |
+|---|---|---|---|---|---|---|
+| 0 | Checks (§11) | 3 | `cpu_short`, `gpu_test` | 10-20 min | Set-up (§1-§9) | Tests pass; the checkpoint tests pass offline; a `VERDICT` line |
+| 1 | Paderborn (§12) | download on the login node, 1 CPU job | login, `cpu_short` | 1-3 h, < 1 h | 0 | `[windows] paderborn: N windows`; `VERIFIED_ON_REAL_DATA = True` |
+| 2 | Feature caches (§13) | 1 CPU + 3 GPU | `cpu_short`, `gpua100` | minutes to 6 h | 1 (or rerun after it) | Every cache `True` under `complete` |
+| 3 | Own PatchTST (§14) | 5 + 5 GPU | `gpua100` | < 1 h + < 1 h | 1 | Five PatchTST runs `complete`, their caches `True` |
+| 4 | Gate 1 (§15) | 1 CPU | `cpu_short` | < 1 h | 2, 3 | `runs/gate1/gate1-v1/report.json` names the winner |
+| 5a | Tuning, nested (§16.2) | 4 GPU | `gpua100` | up to 8 h | 4 | `runs/tune/tune-v1-<dataset>/best.json` |
+| 5b | Plan B (§16.3-§16.5) | 9 GPU | `gpua100` | < 2 h | 5a | `== Plan B runs`: 15 of 15 each |
+| 5c | Gate 2 and its test run (§16.6) | 3 + 3 GPU | `gpua100` | < 12 h, < 4 h | 5a | `decision.json`; the test runs 15 of 15 |
+| 5d | RUL (§16.7) | 4 CPU | `cpu_short` (longer partition for history 30) | < 4 h | 4 | `== RUL runs`: 15 of 15 |
+| 5e | Baselines and physics check (§16.8) | 1 CPU + 4 GPU + 1 GPU | `cpu_short`, `gpua100` | < 1 h, < 8 h, < 2 h | 4 | `== Baselines`: 5 or 15 results each; `explain … done` |
+| 6 | Pretraining and its ablations (§16.9) | 5 + 15 GPU | `gpua100` | < 4 h, < 2 h | 5c (for the fusion choice) | `== Pretraining`: every fold and seed at its last epoch |
+| 7 | Fine-tuning from the backbones (§16.10) | 4 + 12 GPU | `gpua100` | < 2 h | 6, 5a | `== Plan B runs`: the `ft-` runs 15 of 15 |
+| 8 | Download (§17) | - | laptop | minutes | everything above | The archives unpacked on the laptop; then tell me |
+
+Steps 5d and 5e need only Gate 1, and 6 needs only Gate 2's choice: they can run while the
+others are queued. Up to 4 of your A100 jobs run at once; the rest wait. The times are
+estimates; the first job of each kind tells you the real ones (§18).
 
 ### Before you start
 
@@ -92,7 +111,8 @@ The times are estimates. The first job of each kind tells you the real ones (§1
 5. **Step 0** checks (§11), then **Paderborn** (§12).
 6. **Feature caches** (§13) and **PatchTST** (§14), in parallel.
 7. **Gate 1** (§15) when steps 1-3 are complete.
-8. **Plan B, Gate 2 and RUL** (§16) with the Gate-1 winner; then **download** (§17).
+8. **Plan B, Gate 2, RUL and the baselines** (§16.1-§16.8) with the Gate-1 winner.
+9. **Pretraining and fine-tuning** (§16.9-§16.10); then **download** (§17).
 
 ---
 
@@ -729,6 +749,78 @@ for PatchTST) with the physics checks. After the download (§17) I run the paire
 (`pdmfm.report`), the leakage checks and the anomaly tables on the laptop: they read only
 cached features and result files.
 
+**16.9 Pretraining, stage 6** (after §16.6, whose choice decides the fusion stage). One
+backbone per outer fold is pretrained on all five source datasets (`pdmfm.pretrain`): one
+expert per sensor family shared by every dataset, masked modelling, contrastive views of
+each window (CWRU drive end ↔ fan end, XJTU-SY horizontal ↔ vertical, Paderborn vibration ↔
+currents, Nonastreda and MATWI force ↔ photos) and the supervised losses against the text
+prototypes. Fold k's backbone never sees fold k's test or inner-validation units, nor a
+target dataset. The laptop pilot (`PROJECT_LOG.md`, week 8) checked that it learns.
+
+Which stage: Plan B's experts (`late`) always, as the reference and the plan's fallback; and
+the fusion candidate Gate 2 chose, if it chose the same one on at least two of the three
+multimodal datasets:
+
+```bash
+python -c "import json; print({d: json.load(open(f'runs/gate2/gate2-v1-{d}/decision.json'))['model'] for d in ('nonastreda', 'matwi', 'paderborn')})"
+```
+
+Main runs (one job per fold, 3 seeds each; `$ENCODER` and `$ARMS` from §16.1, the full arm
+list: Nonastreda and MATWI simply lack E):
+
+```bash
+for k in 1 2 3 4 5; do
+  sbatch --job-name=pretrain-fold$k --time=04:00:00 slurm/job.sbatch \
+    python -m pdmfm.pretrain --encoder "$ENCODER" --arms $ARMS --run-id pre-v1 --folds $k --seeds 0 1 2 --device cuda
+done
+```
+
+If Gate 2 chose a fusion candidate (say `concat`), the same loop with `--fusion concat
+--run-id pre-v1-concat`.
+
+Ablations (plan: without each loss; one seed, all folds):
+
+```bash
+for k in 1 2 3 4 5; do
+  for ablation in "w-mask" "w-nce" "w-sup"; do
+    sbatch --job-name=pretrain-no-$ablation-fold$k --time=02:00:00 slurm/job.sbatch \
+      python -m pdmfm.pretrain --encoder "$ENCODER" --arms $ARMS --run-id pre-v1-no-$ablation --folds $k --seeds 0 --$ablation 0 --device cuda
+  done
+done
+```
+
+- A log shows the datasets first (`[pretrain] matwi: N training windows of M units, …`; all
+  five must be there, none `skipped`), then one line per epoch:
+  `[pretrain] fold 1 seed 0 epoch 12/100: loss … (sup …, mask …, nce …), validation 0.61, z std 0.14, 9 s`.
+- `validation` is the mean inner-validation score over the datasets; the best epoch is saved
+  as `runs/pretrain/<run-id>/fold<k>-seed<s>/best.pt`. `z std` falling towards 0 over the
+  epochs would be a collapse: send me the log.
+- A job stopped at its time limit resumes from its last epoch when you submit the same line
+  again; finished folds and seeds are skipped.
+
+**16.10 Fine-tuning from the backbones, stage 7.** Plan B (or the Gate-2 winner) on each
+source dataset, started from fold k's own backbone (`--init`; another fold's backbone is
+refused, because its pretraining saw this fold's test units), with each fold's tuned settings:
+
+```bash
+for dataset in nonastreda matwi xjtu_sy paderborn; do
+  sbatch --job-name=ft-$dataset --time=02:00:00 slurm/job.sbatch \
+    python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id ft-v1-$dataset --per-fold runs/tune/tune-v1-$dataset/best.json --init "runs/pretrain/pre-v1/fold{fold}-seed{seed}/best.pt" --device cuda
+  for ablation in w-mask w-nce w-sup; do
+    sbatch --job-name=ft-no-$ablation-$dataset --time=02:00:00 slurm/job.sbatch \
+      python -m pdmfm.planb --dataset $dataset --encoder "$ENCODER" --arms $ARMS --run-id ft-v1-no-$ablation-$dataset --per-fold runs/tune/tune-v1-$dataset/best.json --init "runs/pretrain/pre-v1-no-$ablation/fold{fold}-seed0/best.pt" --device cuda
+  done
+done
+```
+
+- Keep the quotes around the `--init` paths: `{fold}` and `{seed}` are filled in by Plan B.
+  The main runs use the backbone of the same seed; the ablations, pretrained with seed 0,
+  serve all three fine-tuning seeds.
+- If you pretrained a fusion candidate, fine-tune it with the same `--fusion` (and its run id).
+- Each fold's log shows `[pretrain] <dataset>: N pretrained tensors loaded from …`.
+- The comparison with Plan B from scratch (§16.3) is mine, after the download: paired over the
+  test units with `pdmfm.report`.
+
 **Resuming.** A job that stops at its time limit continues when you submit the same command
 again: finished folds and seeds are skipped. The same `--run-id` with other settings is
 refused (`… holds a run with other settings; use another --run-id`), so a changed option
@@ -739,13 +831,14 @@ needs a new run id.
 Pack on Ruche (small; the login node is fine):
 
 ```bash
-cd "$WORKDIR/pdmfm" && tar -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/baselines runs/explain runs/logs
+cd "$WORKDIR/pdmfm" && tar --exclude='last.pt' -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/baselines runs/explain runs/pretrain runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz
 ```
 
-Then on the laptop:
+`--exclude='last.pt'` leaves out the resume states of pretraining (large; the `best.pt`
+backbones are kept). Then on the laptop:
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
@@ -776,8 +869,8 @@ up: keep the archives on the laptop.
 | Cancel | `scancel JOBID`; all your jobs: `scancel -u $USER` |
 | Cache progress | `python -m pdmfm.features status` |
 
-**Every step resumes.** Feature extraction saves after each chunk, PatchTST saves after
-each epoch, and Plan B saves after each fold and seed. A job stopped at its limit (`TIMEOUT`, `DUE TO TIME LIMIT` at the end of the log)
+**Every step resumes.** Feature extraction saves after each chunk, PatchTST and the
+stage-6 pretraining save after each epoch, and Plan B saves after each fold and seed. A job stopped at its limit (`TIMEOUT`, `DUE TO TIME LIMIT` at the end of the log)
 continues when you submit the same command again. For work longer than 24 h, `bash
 slurm/chain.sh PARTS [options] slurm/job.sbatch COMMAND` submits consecutive parts.
 
@@ -804,6 +897,10 @@ encoder, as in §13, never collides.
 | `no modality ['…']; <dataset> has […]` (Plan B) | `--without` names a modality the dataset lacks | Use a name from that list |
 | `… was started with other settings or data; use a new --out` (PatchTST) | Resubmitted with other options, or the corpus changed (Paderborn added) | The original command, or `--out runs/patchtst/fold<k>-v2`. The encoder is then named `patchtst-fold<k>-v2`: extract its features with `--checkpoint runs/patchtst/fold<k>-v2/model` and use the candidate `"patchtst-fold{fold}-v2:T"` |
 | `could not extract K001.rar` | No RAR tool | §12.2 |
+| `… was pretrained for fold j; fold k must use its own backbone` (fine-tuning) | The `--init` path names a fixed fold | Keep `{fold}` in the path, in quotes (§16.10) |
+| `… was pretrained on X features, not Y` (fine-tuning) | `--encoder` differs from the pretraining's | The same `$ENCODER` and `$ARMS` as §16.9 |
+| `[pretrain] <dataset>: skipped (…)` | That dataset's store or features are missing | §12-§14; then a new `--run-id` (the datasets are part of the settings) |
+| `… was started with other settings or data; use another run id` (pretraining) | Resubmitted with other options, or a dataset was added | The original command, or a new `--run-id` |
 | `Disk quota exceeded` | Home or workdir full | `ruche-quota`; move `~/.conda` (§3); `rm -rf ~/.cache/pip` |
 | `git clone` asks for a password and refuses it | GitHub needs a token, not your password | §4 |
 
@@ -834,8 +931,10 @@ After the §10 block, from `$WORKDIR/pdmfm`:
 | Status | `bash slurm/status.sh` |
 | 0 | `sbatch slurm/checks.sbatch` · GPU check (§11) · `sbatch slurm/net_check.sbatch` |
 | 1 | `nohup bash slurm/fetch_paderborn.sh > runs/logs/paderborn-fetch.log 2>&1 &` (login), then the §12.3 job |
-| 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda paderborn --encoder stats --arms T F E` and the §13 loop |
+| 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi paderborn --encoder stats --arms T F E` and the §13 loop |
 | 3 | The §14 loop |
 | 4 | The §15 command |
-| 5 | §16.1 (winner), the §16.2 tuning loop, the §16.3 Plan B loop, then the §16.6 Gate-2 and §16.7 RUL loops |
-| 6 | §17 |
+| 5 | §16.1 (winner), the §16.2 tuning loop, the §16.3 Plan B loop, the §16.6 Gate-2 loop and its test run, the §16.7 RUL loop, the §16.8 baselines |
+| 6 | The §16.9 pretraining loop and its ablations |
+| 7 | The §16.10 fine-tuning loop |
+| 8 | §17 |

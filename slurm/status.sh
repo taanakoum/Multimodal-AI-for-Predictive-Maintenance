@@ -1,7 +1,7 @@
 #!/bin/bash
 # One-screen overview: your jobs, the window stores, the feature caches, the PatchTST
-# pretraining runs, the Gate-1, Plan B, Gate-2, RUL and baseline runs, logs that contain
-# errors, and disk use.
+# pretraining runs, the Gate-1, Plan B, Gate-2, RUL, baseline and stage-6 pretraining runs,
+# logs that contain errors, and disk use.
 # Usage, from anywhere:  source slurm/env.sh && bash slurm/status.sh
 # It only reads files, so it may run on the login node.
 cd "$(dirname "$0")/.." || exit 1
@@ -93,6 +93,23 @@ for folder in runs/rul/*/; do
     found=1
     n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
     echo "  $(basename "$folder"): $n of 15"
+done
+[ "$found" -eq 1 ] || echo "  none yet"
+
+echo
+echo "== Pretraining (epoch reached per fold and seed; best mean validation score)"
+found=0
+for progress in runs/pretrain/*/fold*-seed*/progress.json; do
+    [ -f "$progress" ] || continue
+    found=1
+    python - "$progress" <<'EOF'
+import json, os, sys
+p = json.load(open(sys.argv[1]))
+folder = os.path.dirname(sys.argv[1])
+run, part = os.path.basename(os.path.dirname(folder)), os.path.basename(folder)
+state = "complete" if p["epoch"] >= p["epochs"] else "in progress"
+print(f"  {run} {part}: {state}, epoch {p['epoch']}/{p['epochs']}, best {p['best']:.3f}")
+EOF
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 

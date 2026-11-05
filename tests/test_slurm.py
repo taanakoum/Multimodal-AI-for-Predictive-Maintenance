@@ -76,6 +76,7 @@ def test_status_runs_without_squeue(tmp_path):
         "== Gate-2",
         "== RUL",
         "== Baselines",
+        "== Pretraining",
     ):
         assert header in result.stdout
 
@@ -123,3 +124,16 @@ def test_status_counts_baseline_runs(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "gbm-v1-nonastreda: 2 results" in result.stdout
     assert "explain pas-v1-cwru: done" in result.stdout
+
+
+def test_status_reports_pretraining_progress(tmp_path):
+    folder = tmp_path / "runs" / "pretrain" / "pre-v1" / "fold2-seed1"
+    folder.mkdir(parents=True)
+    (folder / "progress.json").write_text(
+        '{"fold": 2, "seed": 1, "epoch": 40, "epochs": 100, "best": 0.612}'
+    )
+    shutil.copytree(SLURM, tmp_path / "slurm")
+    env = {**os.environ, "PDMFM_DATA_ROOT": str(tmp_path / "data")}
+    result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "pre-v1 fold2-seed1: in progress, epoch 40/100, best 0.612" in result.stdout

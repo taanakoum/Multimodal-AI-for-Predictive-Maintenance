@@ -52,6 +52,7 @@ class TrainConfig:
     fusion: str = "late"  # Gate-2 candidate: late (Plan B), concat, perceiver, mbt, c2f
     input_dropout: float = 0.0  # drop whole modalities from the inputs (fusion search: 0.3)
     schedule: str = "constant"  # or "cosine" (the fusion search)
+    init: str = ""  # a pretrained backbone (pdmfm.pretrain); "{fold}", "{seed}" filled by planb
     device: str = "cpu"
 
     def as_dict(self) -> dict:
@@ -274,7 +275,10 @@ def fit(
     cfg: TrainConfig,
     seed: int,
     log=print,
+    init_fold: int | None = None,
 ) -> Fitted:
+    """``cfg.init``: start from a pretrained backbone (:func:`pdmfm.pretrain.initialize`),
+    which must be ``init_fold``'s own for a source dataset."""
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     device = torch.device(cfg.device)
@@ -284,7 +288,13 @@ def fit(
         raise ValueError("modality_dropout is for late fusion; use input_dropout")
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
-    model = build_model(inputs, cfg.fusion, cfg.d, cfg.dropout, train_rows, cfg.head).to(device)
+    model = build_model(inputs, cfg.fusion, cfg.d, cfg.dropout, train_rows, cfg.head)
+    if cfg.init:
+        from pdmfm.pretrain import initialize
+
+        encoder = inputs.description.get("encoder")
+        initialize(model, cfg.init, inputs.dataset, init_fold, encoder=encoder, log=log)
+    model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = make_scheduler(optimizer, cfg, len(train_rows))
     y_mean, y_std = 0.0, 1.0

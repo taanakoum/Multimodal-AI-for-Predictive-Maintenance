@@ -10,7 +10,9 @@
   photo token's grid cell), a level MLP (F -> 64 -> d for F level features) for level tokens
   and an age embedding for photos; attention pooling with one learned query gives the
   modality summary z_m from that modality's tokens only, so per-modality opinions stay
-  independent.
+  independent. For pretraining (:mod:`pdmfm.pretrain`), hidden tokens get a learned [MASK]
+  content while their role, channel and position embeddings stay; ``identity`` gives a
+  token's embedding without content (the masked-modelling decoder's query).
 * :class:`PrototypeEvidentialHead`: text-anchored classes. q = normalize(W_q z); logits =
   s q P^T + b over the frozen Qwen prototypes P of the label space; evidence = softplus.
 * :class:`NIGHead`: MLP d -> 128 -> 4 with the NIG constraints.
@@ -85,6 +87,30 @@ class ModalityEncoder(nn.Module):
         self.attention = nn.MultiheadAttention(d, heads, dropout=dropout, batch_first=True)
         self.norm = nn.LayerNorm(d)
         self.dropout = nn.Dropout(dropout)
+        # The [MASK] content of hidden tokens (pretraining). Zero at the start, so building a
+        # model draws the same random numbers as before it existed.
+        self.mask_token = nn.Parameter(torch.zeros(d))
+
+    def identity(
+        self,
+        roles: torch.Tensor,  # (T,)
+        channels: torch.Tensor,  # (T,)
+        channel_codes: torch.Tensor,
+        channel_scale: torch.Tensor,
+        positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """(T, d) what each token is (role, channel, position), without its content."""
+        table = self.channel(channel_codes, channel_scale)
+        if positions is None:
+            positions = torch.zeros_like(roles)
+        return self.role(roles) + table[channels] + self.position(positions)
+
+    def level_identity(
+        self, level_channels: torch.Tensor, channel_codes: torch.Tensor, channel_scale: torch.Tensor
+    ) -> torch.Tensor:
+        """(L, d) what each level token is: the level role and its channel."""
+        level_role = torch.full_like(level_channels, ROLE["level"])
+        return self.identity(level_role, level_channels, channel_codes, channel_scale)
 
     def embed(
         self,
@@ -98,12 +124,15 @@ class ModalityEncoder(nn.Module):
         levels: torch.Tensor | None = None,  # (B, L, level_dim)
         level_channels: torch.Tensor | None = None,  # (L,)
         age: torch.Tensor | None = None,  # (B, T) passes since capture
+        hide: torch.Tensor | None = None,  # (B, T) bool: content replaced by [MASK]
+        level_hide: torch.Tensor | None = None,  # (B, L) bool
+        level_present: torch.Tensor | None = None,  # (B, L) bool; None: all present
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """(token embeddings (B, T [+ L], d), token present (B, T [+ L]) bool)."""
-        table = self.channel(channel_codes, channel_scale)  # (C, d)
-        if positions is None:
-            positions = torch.zeros_like(roles)
-        x = self.adapter(tokens) + self.role(roles) + table[channels] + self.position(positions)
+        content = self.adapter(tokens)
+        if hide is not None:
+            content = torch.where(hide.unsqueeze(-1), self.mask_token, content)
+        x = content + self.identity(roles, channels, channel_codes, channel_scale, positions)
         if self.age is not None and age is not None:
             x = x + self.age(torch.log1p(age.clamp_min(0)).unsqueeze(-1))
         present = (
@@ -112,11 +141,15 @@ class ModalityEncoder(nn.Module):
             else torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
         )
         if self.level is not None and levels is not None and level_channels is not None:
-            level_role = torch.full_like(level_channels, ROLE["level"])
-            lv = self.level(levels) + self.role(level_role) + table[level_channels]
-            lv = lv + self.position(torch.zeros_like(level_channels))
+            level_content = self.level(levels)
+            if level_hide is not None:
+                level_content = torch.where(
+                    level_hide.unsqueeze(-1), self.mask_token, level_content
+                )
+            lv = level_content + self.level_identity(level_channels, channel_codes, channel_scale)
             x = torch.cat([x, lv], 1)
-            present = torch.cat([present, present.new_ones(lv.shape[:2])], 1)
+            kept = level_present if level_present is not None else present.new_ones(lv.shape[:2])
+            present = torch.cat([present, kept], 1)
         return x, present
 
     def pool(self, x: torch.Tensor, present: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

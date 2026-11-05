@@ -18,8 +18,10 @@ beside it (written atomically; a rerun skips finished folds and seeds), then
 ``summary.csv`` and ``summary.md``. Paired tests across fold x seed come later (report stage).
 
 ``--fusion`` trains a Gate-2 candidate (:mod:`pdmfm.model.fusion`) instead; its fused head
-is also scored alone (``only_fused``). ``--per-fold FILE`` (a ``best.json`` of
-:mod:`pdmfm.tune` or a ``decision.json`` of :mod:`pdmfm.gate2`) applies each outer fold's own
+is also scored alone (``only_fused``). ``--init`` fine-tunes from fold k's pretrained
+backbone (:mod:`pdmfm.pretrain`; ``{fold}`` and ``{seed}`` in the path), the plan's stage 7.
+``--per-fold FILE`` (a ``best.json`` of :mod:`pdmfm.tune` or a ``decision.json`` of
+:mod:`pdmfm.gate2`) applies each outer fold's own
 choice on top of the command-line settings: the nested estimate, in which no test unit
 helped choose the settings it is scored with. Inputs are assembled once, or once per fold when they
 depend on it: ``{fold}`` in the
@@ -505,7 +507,11 @@ def run(
                 raise ValueError(f"{path} holds a run with other settings; use another --run-id")
             sizes = f"train {len(train_rows)}, validation {len(val_rows)}, test {len(test_rows)}"
             log(f"[planb] fold {fold} seed {seed}: {sizes} windows")
-            fitted = fit(inputs, train_rows, val_rows, fold_cfg, seed, log=log)
+            seed_cfg = replace(
+                fold_cfg,
+                init=fold_cfg.init.replace("{fold}", str(fold)).replace("{seed}", str(seed)),
+            )
+            fitted = fit(inputs, train_rows, val_rows, seed_cfg, seed, log=log, init_fold=fold)
             val_pred = predict(fitted.model, inputs, val_rows, fold_cfg)
             y_mean, y_std = fitted.y_mean, fitted.y_std
             temperature, interval = _calibrate(inputs, val_rows, val_pred, y_mean, y_std)
@@ -919,6 +925,11 @@ def main(argv: list[str] | None = None) -> None:
         "--force-mean", action="store_true", help="add force channels' window mean (ablation)"
     )
     parser.add_argument(
+        "--init",
+        default="",
+        help="pretrained backbone: runs/pretrain/<id>/fold{fold}-seed{seed}/best.pt (stage 7)",
+    )
+    parser.add_argument(
         "--per-fold",
         type=Path,
         nargs="+",
@@ -948,6 +959,7 @@ def main(argv: list[str] | None = None) -> None:
         fusion=args.fusion,
         input_dropout=args.input_dropout,
         schedule=args.schedule,
+        init=args.init,
         device=args.device,
     )
     started = time.perf_counter()
