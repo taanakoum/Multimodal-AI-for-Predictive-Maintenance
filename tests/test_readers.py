@@ -342,6 +342,21 @@ def test_phm2010_reader_skips_csv_files_without_a_cut_number(tmp_path):
     assert [(i.unit, i.meta["cut"]) for i in infos] == [("c4", 1)]
 
 
+def test_phm2010_wear_of_an_unlabelled_cutter_is_ignored(tmp_path):
+    """One Kaggle copy of c3.zip carries a wear file its page flags as incorrect; c3 is
+    unlabelled in the challenge, so its cuts get no target."""
+    for name in ("c1", "c3"):
+        cutter = tmp_path / name
+        cutter.mkdir()
+        (cutter / f"{name}_wear.csv").write_text("cut,flute_1,flute_2,flute_3\n1,30,32,31\n")
+        np.savetxt(cutter / f"c_{name[1]}_001.csv", RNG.standard_normal((5, 7)), delimiter=",")
+    reader = get_reader("phm2010", root=tmp_path)
+    by_cutter = {i.unit: i for i in reader.index()}
+    assert by_cutter["c1"].meta["wear_um"] == 32.0 and by_cutter["c1"].meta["labelled"]
+    assert by_cutter["c3"].meta["wear_um"] is None and not by_cutter["c3"].meta["labelled"]
+    assert reader.load(by_cutter["c3"]).targets == {}
+
+
 def test_phm2010_wear_file_without_flute_columns_is_rejected(tmp_path):
     from pdmfm.datasets.phm2010 import read_wear
 

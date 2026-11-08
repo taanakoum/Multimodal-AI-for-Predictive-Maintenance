@@ -2,12 +2,12 @@
 
 This is the running record of tasks, progress, findings, implementations and decisions. Each week has its own section, newest last. The plan it follows is the [Project 14 implementation plan](https://claude.ai/artifact/1M2DPuffJP1mRt2oiUujx5); a reference copy is in [`docs/PLAN.md`](docs/PLAN.md).
 
-## Status at a glance (updated 2026-11-05)
+## Status at a glance (updated 2026-11-05, week 8)
 
 | Area | State |
 | --- | --- |
-| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. Week 7: the report statistics (paired tests over units, Holm), sensor-only baselines, leakage checks, anomaly detection and the physics score are built and run locally; channels are now described in one cross-dataset vocabulary (E2) and model selection is nested; nothing blocks the pretraining code. The full Gate 2, the GPU caches, the GPU baselines and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
-| Tests | See "Week 7, continued" below for the counts; lint, format, pyright and pre-commit clean |
+| Phase | Stages 1-5 implemented and tested. Gate 2 (fusion search by inner cross-validation) built; its local pilot on Nonastreda keeps Plan B by the rule. RUL from past snapshots built; it does not beat Plan B, so Plan B stays. MATWI added as a source dataset. Week 7: the report statistics (paired tests over units, Holm), sensor-only baselines, leakage checks, anomaly detection and the physics score are built and run locally; channels are now described in one cross-dataset vocabulary (E2) and model selection is nested. Week 8: stage 6 (pretraining across the source datasets) and stage 7 (fine-tuning from it) are built, tested and piloted on the laptop; the progress review is at the end of week 8. The full Gate 2, the GPU caches, the GPU baselines and Paderborn are ready for Ruche (`docs/RUCHE_RUNBOOK.md`, §13-§16). Next: the Ruche results, then pretraining (weeks 8-9) |
+| Tests | See "Week 8" below for the counts; lint, format, pyright and pre-commit clean |
 | CI | Runs on GitHub on pushes to `master` and on pull requests (`docs/CI.md`) |
 | Datasets on `D:\Project14\data` | CWRU, KAIST, XJTU-SY, Nonastreda, MATWI, Najafi thermal, NASA milling, MBHM metadata; window stores built for CWRU, KAIST, XJTU-SY, Nonastreda, MATWI. **Blocked:** Paderborn (Ruche runbook §12), PHM 2010 (your Kaggle download) |
 | EDA | `docs/EDA_REPORT.md`: 13 findings, three of them preprocessing rules |
@@ -166,6 +166,8 @@ Week 2 (Nov 2-8, plan):
 | 2026-11-05 | Channel embeddings from physical descriptions (`pdmfm.sensors`), plus token positions | One token space across datasets (E2); no cost on Nonastreda or XJTU-SY |
 | 2026-11-05 | Nested model selection: each outer fold's own choices score its test units (`--per-fold`); pooled choices only for the final model | Fold k's validation group is fold k+1's test group |
 | 2026-11-05 | XJTU-SY level baseline made causal | Snapshots 1-9 were compared with later ones |
+| 2026-11-05 | Pretraining shares one expert per family and each family's text projection across datasets; the decoder reads only summaries | One token space (E2) and no leak of hidden content (tested) |
+| 2026-11-05 | Fine-tuning only from fold k's own backbone | Another fold's pretraining saw this fold's test units |
 
 ## Week 1, continued (2026-10-26): data layer, EDA, CI
 
@@ -1385,3 +1387,176 @@ every choice is final.
 | New and changed tests | `test_sensors` (27: catalogue against the synthetic readers and 5 real readers, uniqueness, identical vectors across datasets, order invariance, sensitivity to descriptions, the scale, photo entry and positions); `test_tune` rewritten for nested search (7: inner splits, never an outer test unit, every non-test unit validated once, each fold's own choice, near-ties, old results refused, `choose`); Gate 2 per-fold decision (1, plus the search test); Plan B `--per-fold` with merged files and refusals (1); Gate 1 per-fold winners (1); causal XJTU-SY baseline (1); hand-built inputs must describe their channels (an existing test, extended); the synthetic learning test now judges medians over 3 seeds |
 | Real data | Plan B reruns with the new embedding on Nonastreda and XJTU-SY (5 folds × 3 seeds each) and the causal-baseline run, compared pairwise above |
 | CPU | `pdmfm.resources` before each heavy job; threads capped at 1-4 |
+
+## Week 8 (2026-11-05): pretraining (stage 6), fine-tuning from it (stage 7), progress review
+
+Your request: build and validate the pretraining code (it needs nothing from Ruche until it
+runs); review what is built, what is missing and what comes next, in order of priority and
+with how each part will be evaluated; make sure the Ruche runbook holds every run up to this
+stage and is easy to follow.
+
+### What was built
+
+| Part | What it does |
+| --- | --- |
+| `pdmfm/pretrain.py` | One backbone per outer fold shared by every source dataset: one expert per sensor family (adapter, channel and position embeddings, level MLP, attention pooling), each family's text projection W_q, and the fusion stage over all families when Gate 2 picks one. Each dataset keeps its token layout, standardization, prototypes, biases and regression heads. Losses: masked modelling (modalities dropped with p = 0.3, never all; 40 % of the kept tokens hidden behind a learned [MASK]; a decoder queried with the hidden tokens' identities reads only the kept modalities' summaries and predicts the layer-normed encoder features (1 - cosine) and the level and slow descriptors (MSE)), contrastive views (InfoNCE, learnable temperature from 0.07, no same-unit negatives), and Plan B's supervised losses against the text prototypes. Datasets drawn ∝ √n, units balanced; AdamW 3e-4, weight decay 0.05, cosine after 5 % warm-up, bf16 on a GPU; checkpoint on the mean inner-validation score; collapse monitor; resumes after every epoch |
+| `ModalityEncoder` | The learned [MASK] content (zero at the start, so Plan B draws the same random numbers as before), level-token masks for channel views, and `identity` (a token's embedding without content: the decoder's query) |
+| `LateEvidential`, `FusionModel` | Return the modality summaries (`z`) and the fused representation; a fusion stage can read a superset of a dataset's modalities, with placeholders for absent families (one stage for all datasets) |
+| `planb --init`, `TrainConfig.init`, `fit(init_fold=...)` | Stage 7: Plan B (or a Gate-2 candidate) fine-tuned from fold k's own backbone; `{fold}` and `{seed}` in the path; another fold's backbone is refused (its pretraining saw this fold's test units), and so is one pretrained on other features or with another stage. The backbone fixes the width and the head (one backbone serves every dataset, while Ruche tunes `d` over {64, 256} per dataset and fold from scratch, so a fold tuned to 64 would have stopped with mismatched shapes); the tuned learning rate and dropout stay, and the settings record what ran |
+| `slurm/status.sh` | `== Pretraining`: each fold and seed's epoch and best validation score |
+| Runbook | A run-order table of every job up to stage 7 (what, how many, partition, time, what it needs, when it is done); §16.9 pretraining and its ablations, §16.10 fine-tuning; pretraining in the download, status, resume and troubleshooting parts; the cheat sheet's two inconsistencies fixed (MATWI missing from the handcrafted-cache line; baselines and the Gate-2 test run missing from step 5) |
+
+### Validation
+
+`tests/test_pretrain.py` (18 tests, synthetic data, all five source datasets):
+
+- pretraining never reads a fold's test or inner-validation units nor a target; CWRU trains
+  on 0-2 hp and validates on 3 hp; unlabelled windows are pretrained on but never validated;
+- datasets are drawn ∝ √n and units equally;
+- one expert per family is the same module in every dataset; the text projection is shared,
+  each label space keeps its bias; a step on CWRU changes what XJTU-SY uses;
+- masking keeps at least one modality per window, hides about 40 % of the kept tokens and
+  never an absent one; **whatever the hidden tokens and the dropped modalities contain, the
+  summaries the decoder reads and the model's outputs are unchanged** (no leak);
+- the contrastive views hold what they claim (CWRU's drive end only, then its fan end only;
+  Nonastreda's force without photos); another window of the same unit is never a negative;
+- a run writes its files, is skipped when done, refuses other settings and resumes after an
+  interrupted epoch; the loss ablations switch their terms off; a C2F stage is pretrained
+  across datasets;
+- fine-tuning loads the backbone's values, refuses another fold's backbone, another encoder
+  and another stage; a dataset outside pretraining takes the shared experts; Plan B
+  fine-tunes each fold from its own backbone; a fold tuned to another width is
+  fine-tuned at the backbone's, with its tuned learning rate and dropout.
+
+**Laptop pilot (real data).** Mantis F + E on CWRU, XJTU-SY and Nonastreda (MATWI's Mantis
+cache and Paderborn are on Ruche), 5 outer folds, seed 0, 30 epochs, batch 128, Plan B's
+experts (`runs/pretrain/pilot-mantis-FE`):
+
+| Fold | Best epoch | Validation: mean (CWRU, XJTU-SY, Nonastreda) | Plan B from scratch (XJTU-SY, Nonastreda) | Masked modelling | Contrastive | Supervised | Summary spread |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 11 | 0.338 (0.517, −0.092, 0.590) | 0.192, 0.620 | 0.96 → 0.35 | 4.71 → 2.10 | 5.40 → 1.62 | 0.11 → 0.62 |
+| 2 | 28 | 0.294 (0.733, 0.183, −0.035) | 0.455, 0.098 | 1.16 → 0.40 | 4.59 → 1.10 | 5.22 → 0.15 | 0.16 → 0.68 |
+| 3 | 23 | 0.708 (0.733, 0.613, 0.777) | 0.644, 0.822 | 1.17 → 0.42 | 4.55 → 1.06 | 4.89 → 0.06 | 0.16 → 0.62 |
+| 4 | 27 | 0.568 (0.867, 0.168, 0.670) | 0.219, 0.800 | 1.10 → 0.37 | 4.57 → 1.09 | 4.62 → 0.02 | 0.21 → 0.65 |
+| 5 | 24 | 0.738 (0.867, 0.732, 0.615) | 0.813, 0.747 | 1.05 → 0.33 | 4.64 → 1.11 | 4.91 → −0.68 | 0.15 → 0.57 |
+
+(Losses from the first to the last epoch; the supervised loss includes the NIG negative
+log-likelihood, which can go below zero. 13-18 s per epoch with 3-4 threads on a busy
+laptop.)
+
+- Every loss falls on every fold: the masked-modelling loss by about two thirds, the
+  contrastive loss from about log(batch) to about 1.1 (the views of one window find each
+  other among the batch), the supervised loss to near zero.
+- No collapse: the summaries' per-dimension spread grows from about 0.15 to about 0.6; the
+  temperature stays near 0.07.
+- The pretraining heads validate a little below Plan B trained alone on each dataset (the
+  heads are not the product: pretraining shares experts across three datasets, draws units
+  equally, which underweights long-lived bearings such as Bearing3_2, the bulk of fold 1's
+  XJTU-SY validation, and runs at a lower learning rate). Fold 2's Nonastreda validation tool
+  T5 is hard for both (0.098 from scratch). Whether the backbone helps is decided by fine-tuning.
+
+Then Plan B fine-tuned from each fold's backbone (5 folds × 3 seeds, the settings of the
+from-scratch runs), paired over test units:
+
+| Dataset | Metric | From scratch | From the pilot backbone | Difference [95 %] | Units better | Holm p |
+| --- | --- | --- | --- | --- | --- | --- |
+| Nonastreda (Mantis F + photos) | bag macro-F1 | 0.818 | 0.795 | −0.023 [−0.047, −0.004] | 2/10 tools | 0.32 |
+| Nonastreda | wear RMSE (µm) | 25.2 | 24.8 | −0.43 [−1.10, +0.61] | 5/10 | 0.86 |
+| XJTU-SY (Mantis F + E) | RUL RMSE (bearing average) | 0.174 (0.189) | 0.176 (0.205) | +0.002 [−0.007, +0.013] | 6/15 bearings | 0.45 |
+| XJTU-SY | RUL RMSE after the fault onset | 0.305 | 0.287 | −0.018 [−0.032, +0.018] | 8/15 | 0.93 |
+
+**Verdict.** The machinery works end to end; the pilot shows no gain on the test units: a
+small loss in Nonastreda's macro-F1 (2 of 10 tools better, not significant after Holm), a tie
+on XJTU-SY. One question followed on validation only (the test units were not read to
+answer it): does fine-tuning at Plan B's tuned learning rate (1e-3) wash the backbone out?
+
+| Nonastreda, validation (mean over 5 folds × 3 seeds) | From scratch | Fine-tuned, lr 1e-3 (tuned) | Fine-tuned, lr 3e-4 |
+| --- | --- | --- | --- |
+| Best validation score | 0.610 | 0.614 | 0.602 |
+| Validation after the first epoch | 0.243 | 0.170 | 0.520 |
+| Best epoch | 14.3 | 13.7 | 7.3 |
+
+At the tuned rate the first epoch erases the pretrained start (0.170, below scratch); at 3e-4
+the start survives (0.520) and the best epoch comes twice as early, but the best score is no
+higher (better on folds 1 and 3, worse on 2 and 5). On XJTU-SY too the backbone starts far
+higher (0.315 against 0.033 after one epoch) and ends level. So this backbone gives a head
+start, not a better end point, and fine-tuning keeps its tuned learning rate (no change to
+§16.10). Why no gain here, and what Ruche changes: three sources only (MATWI's Mantis cache
+and Paderborn are on Ruche, so no second force-and-photo set and no current or temperature
+views), 30 epochs, one pretraining seed; and source datasets with enough labels to train
+Plan B alone, where pretraining is expected to help least. The decisive tests are the Ruche
+pretraining on all five sources (§16.9-§16.10) and stage 8: machines the backbone never saw,
+with 1-10 labelled windows per class.
+
+One fix came out of preparing the Ruche fine-tuning (`c4f4ac0`): Ruche tunes `d` over {64,
+256} per dataset and fold, while one backbone (d 256) serves every dataset, so a fold tuned
+to 64 would have stopped the §16.10 job with mismatched shapes. Fine-tuning now takes the
+backbone's width and head and keeps the tuned recipe (test added; the pilot runs' settings
+are unchanged).
+
+### Progress review
+
+Calendar: week 2 of 14 (deliverables 2027-01-31). Code: stages 0-7 written and tested, ahead
+of the plan's calendar (stage 6 was due in weeks 8-9). Results: everything after the local
+pilots waits on Ruche (Gate 1 onward with the winning encoder, MATWI's and Paderborn's
+caches) and on your PHM 2010 download.
+
+**What exists, by stage**
+
+| # | Stage | Code | Results so far | Missing |
+| --- | --- | --- | --- | --- |
+| 0-1 | Data, window stores | Done (8 readers, 7 stores' worth of specs; `pdmfm.sensors` describes every channel) | CWRU, KAIST, XJTU-SY, Nonastreda, MATWI built | Paderborn (Ruche §12), PHM 2010 (your download) |
+| 2 | Encoders, caches | Done (stats, Mantis, MOMENT, AST, own PatchTST, DINOv2, Qwen3) | Mantis (not MATWI), handcrafted, photos, texts on the laptop | MOMENT, AST, PatchTST, MATWI's Mantis (Ruche §13-§14) |
+| 3 | Gate 1 | Done, with per-fold winners | Local: Mantis F, the same in all 5 folds | The full probe (Ruche §15) |
+| 4 | Plan B | Done (nested tuning, `--per-fold`, channel descriptions) | Nonastreda 0.818 [0.755, 0.871] (ties persistence 0.779); XJTU-SY RUL 0.180; MATWI 0.443 | The Gate-1 winner, Paderborn, 3 seeds on MATWI (§16.2-§16.5) |
+| 5 | Gate 2 | Done (6 candidates, nested decisions) | Pilot (Nonastreda): Plan B stays | The full search (§16.6) |
+| - | RUL from past snapshots | Done | Not adopted (week 6) | The Gate-1 winner (§16.7) |
+| - | Baselines, report, leakage, anomaly, physics | Done (week 7) | Plan B beats every sensor-only baseline on Nonastreda; ties them on XJTU-SY and MATWI; CWRU anomaly saturated; Mantis probe fails the physics check, handcrafted passes | Ruche reruns with the winner and MOMENT (§16.8) |
+| 6 | Pretraining | **Done this week** | Local pilot below | All 5 sources, 3 seeds, ablations (§16.9) |
+| 7 | In-domain evaluation | `planb --init` + `pdmfm.report` | Local pilot below | The Ruche fine-tuning (§16.10); **Nonastreda's 10-fold leave-one-tool-out from a backbone pretrained without Nonastreda** (for comparison with the dataset authors' ~75 %): `planb` runs the 5 outer folds only, so a `--protocol loto` option is missing (about a day) |
+| 8 | Adaptation (Goal 2) | **Not built**: target splits and few-shot draws exist (`protocols`); `initialize` already loads the shared experts into a dataset the backbone never saw | - | `pdmfm/adapt.py`: zero-shot through the fault descriptions, linear probe, LoRA (online re-encoding of support windows), full fine-tuning; the recipe chosen on the pseudo-target (Paderborn's artificial-damage validation bearings); the target level baselines from support windows; PHM 2010's store |
+| 9 | Calibration | Done (temperature, interval scale) | In every Plan B table | On the targets' support sets (part of stage 8) |
+| 10 | Anomaly, TimesFM | Partly: kNN, RMS, isolation forest | CWRU saturated; XJTU-SY onset | The masked-modelling error score (now possible: the pretraining decoder), the zero-shot text score, the label-free onset metric (improvement 5), TimesFM's RUL arm, anomalib photo maps; the targets at stage 8 |
+| 11 | Explanations (Goal 3) | Partly: band occlusion, physics score, deletion and randomization tests on a probe | Mantis fails the physics check on CWRU | Occlusion of the final model (fine-tuned models must be kept: `planb` saves predictions only), relevance through a fusion stage if Gate 2 picks one, the explanation cards (physics line only where PAS passes) |
+| 12 | Report, release | Partly: paired statistics, baselines, leakage | Week-7 reports | Figures, the stratified cross-dataset test (improvement 4), model card, datasheet, licence notes |
+
+**What still needs to be done, in order of priority**
+
+1. **Ruche runs** (yours; the critical path): the run-order table of the runbook, steps 0-7.
+   Gate 1, Gate 2, Plan B with the winner, the baselines, pretraining and fine-tuning all
+   come from it. About 3 h of your time over a few days.
+2. **PHM 2010 download** (yours, 15-30 min): the milling transfer target.
+3. **Stage 8, adaptation** (`pdmfm/adapt.py`; Must; 6-8 days): the plan's Goal 2. It needs
+   nothing from Ruche to be written; its runs need the backbones.
+4. **Stage 7 completion** (Must; about a day): Nonastreda's leave-one-tool-out protocol in
+   `planb`, with `pretrain --datasets` excluding Nonastreda.
+5. **Stage 11, explanations on the final model** (Must; 3-5 days): keep the fine-tuned
+   models, band occlusion through Plan B's inputs, the explanation cards.
+6. **The improvements of week 7, by value**: defect-line tokens (1), baseline-relative
+   embeddings (2) before the final Ruche pretraining if possible; the evaluation fixes (4, 5,
+   7, hours each); experiment E1.
+7. **Stage 10 completion** (Should; 2-3 days): the masked-modelling anomaly score from the
+   pretraining decoder, the text score; TimesFM (Could).
+8. **Report and release** (Must; 3-4 days), then writing (2 weeks, plan weeks 13-14).
+
+**How each part is evaluated**
+
+| Goal | Question | Evidence | Status |
+| --- | --- | --- | --- |
+| 1: one backbone fusing sensors, images and text | Does pretraining across datasets help each source dataset? Does fusion beat late aggregation? | Plan B from scratch against Plan B fine-tuned from fold k's own backbone, 5 outer folds × 3 seeds, nested settings, paired over test units with Holm (stage 7); the three loss ablations; Gate 2's verdict; missing-modality robustness; the dataset-identity probe on the pretrained summaries against frozen features; Nonastreda's leave-one-tool-out against the authors' ~75 % | Code done; local pilot; Ruche pending |
+| 2: unseen machines with few labels | How much of a new machine's labels are needed, and does the backbone beat the baselines with them? | Stage 8 on KAIST, Paderborn real damage, PHM 2010: zero-shot, linear probe, LoRA and full fine-tuning with k ∈ {1, 5, 10} support windows per class (5 draws), against the baselines fitted on the same support; anomaly detection from healthy support only | Protocols done; `adapt.py` to build |
+| 3: trust | Are the probabilities and intervals calibrated, and do explanations point at physics? | ECE, NLL and coverage before and after calibration (every table); missing-modality curves; the physics score and deletion test on the final model; cards shown only where the physics check passes | Calibration done; physics machinery done on probes; final-model explanations to build |
+
+Every claim keeps the protocol's guards: unit-disjoint splits, nested selection, targets read
+once at stage 8, results over test units with intervals and paired tests.
+
+### Verification of this pass
+
+| Check | Result |
+| --- | --- |
+| Full suite with the real data and the cached checkpoints | **529 passed, 30 skipped, 0 failed** (skipped: 19 Linux-only SLURM, 5 network, 6 waiting for the Paderborn and PHM 2010 data); the width fix's test, added afterwards, and the fine-tuning tests: 3 passed |
+| Fresh environments (`run_local_ci.sh`, as CI) | **496 passed, 60 skipped** on Python 3.12 (with the width test) and **495 passed, 60 skipped** on 3.11 (collected just before it; the development environment, also 3.11, passes it), coverage 87-88 %, pyright **0 errors** |
+| ruff, pyright `pdmfm`, pre-commit | Clean; pyright **0 errors** |
+| New tests | `test_pretrain` (18, listed above); status script's pretraining section (1, Linux) |
+| Real data | The 5-fold pretraining pilot and the fine-tuning of Plan B from it on Nonastreda and XJTU-SY (5 folds × 3 seeds each), compared above |
+| CPU | `pdmfm.resources` before each heavy job; the first fine-tuning attempt was refused while another session's job held the CPU, and ran once it was free, with 3 threads |

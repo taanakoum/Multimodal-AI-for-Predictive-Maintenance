@@ -4,7 +4,8 @@ This runbook runs stages 2-7 of the plan on **Ruche**, the cluster of the Mésoc
 Paris-Saclay:
 
 - the feature caches that are too slow for the laptop (MOMENT, AST, your own PatchTST);
-- the Paderborn data, which only Ruche can download;
+- the two datasets still to download: Paderborn, which only Ruche can fetch, and PHM 2010
+  (the milling target of stage 8), from Kaggle with your token;
 - the Gate-1 encoder probe on all four of its tasks;
 - the Plan B baseline (stage 4) with the Gate-1 winner, on Nonastreda, MATWI, XJTU-SY and
   Paderborn;
@@ -41,7 +42,7 @@ Ruche** (in the SSH session).
 |---|---|
 | Overview | What runs where · the jobs · before you start · the path at a glance |
 | A: Set up (once) | §1 Laptop · §2 Connect · §3 Storage · §4 Code · §5 Data · §6 Python environment · §7 `slurm/env.sh` · §8 Weights · §9 SLURM scripts |
-| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: Paderborn · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B (§16.1-16.5), Gate 2 (§16.6), RUL (§16.7), baselines (§16.8), pretraining (§16.9), fine-tuning (§16.10) · §17 Step 6: download |
+| B: The runs | §10 Every session · §11 Step 0: checks · §12 Step 1: downloads (Paderborn §12.1-12.3, PHM 2010 §12.4) · §13 Step 2: feature caches · §14 Step 3: PatchTST · §15 Step 4: Gate 1 · §16 Step 5: Plan B (§16.1-16.5), Gate 2 (§16.6), RUL (§16.7), baselines (§16.8), pretraining (§16.9), fine-tuning (§16.10) · §17 Step 6: download |
 | C: Operating | §18 Watch, resume, cancel · §19 Troubleshooting · §20 Rules · §21 Cheat sheet |
 
 ## Overview
@@ -54,6 +55,8 @@ Ruche** (in the SSH session).
 | Mantis features, DINOv2 photo tokens (MATWI's insert crops included), Qwen3 texts, a first Gate-1 probe | Laptop (done; `PROJECT_LOG.md`) | Fast enough on the CPU |
 | Paderborn download | Ruche login node | Its host refuses the laptop |
 | Paderborn extraction, acceptance tests, window store | Ruche CPU job | Needs only a RAR tool |
+| PHM 2010 download (Kaggle), then extraction, acceptance tests, window store | Ruche login node, then a CPU job | No host serves it without a login; your Kaggle token. A target: read from stage 8 only |
+| Target caches (KAIST, PHM 2010) | Ruche CPU and GPU jobs (§13) | Stage 8 reads them; nothing up to stage 7 does |
 | MOMENT (arms T, F, E) and AST (arm S) on all windows | Ruche GPU | About 40 h each on the laptop CPU; minutes on an A100 |
 | Own PatchTST pretraining (5 folds), then its features | Ruche GPU | Pretraining needs a GPU |
 | Gate-1 probe on all four tasks | Ruche CPU job (or the laptop) | Logistic and ridge regressions |
@@ -75,7 +78,8 @@ same time. `bash slurm/status.sh` (§10) shows each step's progress.
 | # | Step (section) | Jobs | Partition | Time each | Needs | Done when |
 |---|---|---|---|---|---|---|
 | 0 | Checks (§11) | 3 | `cpu_short`, `gpu_test` | 10-20 min | Set-up (§1-§9) | Tests pass; the checkpoint tests pass offline; a `VERDICT` line |
-| 1 | Paderborn (§12) | download on the login node, 1 CPU job | login, `cpu_short` | 1-3 h, < 1 h | 0 | `[windows] paderborn: N windows`; `VERIFIED_ON_REAL_DATA = True` |
+| 1 | Paderborn (§12.1-§12.3) | download on the login node, 1 CPU job | login, `cpu_short` | 1-3 h, < 1 h | 0 | `[windows] paderborn: N windows`; `VERIFIED_ON_REAL_DATA = True` |
+| 1b | PHM 2010 (§12.4) and the target caches (§13, end) | download on the login node, 1 CPU job; 1 CPU + 2 GPU | login, `cpu_med`; `cpu_short`, `gpua100` | about 1 h, < 4 h; < 2 h | 0 (any time; for stage 8) | `[windows] phm2010: N windows`; `VERIFIED_ON_REAL_DATA = True`; the target caches `True` |
 | 2 | Feature caches (§13) | 1 CPU + 3 GPU | `cpu_short`, `gpua100` | minutes to 6 h | 1 (or rerun after it) | Every cache `True` under `complete` |
 | 3 | Own PatchTST (§14) | 5 + 5 GPU | `gpua100` | < 1 h + < 1 h | 1 | Five PatchTST runs `complete`, their caches `True` |
 | 4 | Gate 1 (§15) | 1 CPU | `cpu_short` | < 1 h | 2, 3 | `runs/gate1/gate1-v1/report.json` names the winner |
@@ -89,7 +93,8 @@ same time. `bash slurm/status.sh` (§10) shows each step's progress.
 | 8 | Download (§17) | - | laptop | minutes | everything above | The archives unpacked on the laptop; then tell me |
 
 Steps 5d and 5e need only Gate 1, and 6 needs only Gate 2's choice: they can run while the
-others are queued. Up to 4 of your A100 jobs run at once; the rest wait. The times are
+others are queued. Step 1b feeds only stage 8 (targets are never pretrained on), so it can
+run at any point; do it early, because the Kaggle download needs you at the keyboard. Up to 4 of your A100 jobs run at once; the rest wait. The times are
 estimates; the first job of each kind tells you the real ones (§18).
 
 ### Before you start
@@ -100,7 +105,8 @@ estimates; the first job of each kind tells you the real ones (§18).
 | This repository pushed to GitHub | `git push` after your commits; Ruche clones it (§4) |
 | A GitHub token with read access, or an SSH key on GitHub | The repository is private, so `git clone` asks for credentials (§4) |
 | The five window stores on the laptop | `python -m pdmfm.windows info` lists cwru, kaist, matwi, nonastreda and xjtu_sy |
-| About 45 GB free in `$WORKDIR` | Environment about 6 GB, weights about 4 GB, window stores about 4.2 GB, Paderborn several GB raw plus its store, caches and runs a few GB |
+| A Kaggle account | For PHM 2010 (§12.4); free, with an API token from Kaggle's settings |
+| About 90 GB free in `$WORKDIR` | Environment about 6 GB, weights about 4 GB, window stores about 4.2 GB, Paderborn several GB raw plus its store, PHM 2010 about 10 GB of zips and up to 30 GB extracted (deletable once its store is built), caches and runs a few GB. These are estimates: check with `ruche-quota` |
 
 ### The path at a glance
 
@@ -108,7 +114,8 @@ estimates; the first job of each kind tells you the real ones (§18).
 2. **Connect** (§2), prepare storage (§3), clone (§4), upload the stores (§5).
 3. **Install** the environment (§6), set `slurm/env.sh` (§7), download the weights (§8).
 4. **Every session:** the §10 block.
-5. **Step 0** checks (§11), then **Paderborn** (§12).
+5. **Step 0** checks (§11), then the **downloads** (§12): Paderborn, and PHM 2010 with your
+   Kaggle token.
 6. **Feature caches** (§13) and **PatchTST** (§14), in parallel.
 7. **Gate 1** (§15) when steps 1-3 are complete.
 8. **Plan B, Gate 2, RUL and the baselines** (§16.1-§16.8) with the Gate-1 winner.
@@ -144,7 +151,8 @@ tar -czf pdmfm-windows.tar.gz interim/windows/cwru interim/windows/xjtu_sy inter
 ```
 
 The archive is about 4 GB: the signals are float32 and compress little (MATWI alone is
-1.7 GB). KAIST is a target, used only from stage 8; leave it out if the upload is slow. The
+1.7 GB). KAIST is a target, used only from stage 8: if the upload is slow, leave it out now
+and upload `interim/windows/kaist` before the target caches (§13, end). The
 MATWI photos never go to Ruche: their DINOv2 tokens are in `interim/features/images`.
 
 ## 2. Connect
@@ -370,7 +378,17 @@ pages, `q` quits):
 If `paderborn` also fails on the **login** node, Ruche cannot fetch Paderborn either: use the
 VPN route in `docs/USER_ACTIONS.md` (step 2) and build the store on the laptop instead of §12.
 
-## 12. Step 1: Paderborn
+## 12. Step 1: downloads (Paderborn, PHM 2010)
+
+Two datasets are still to download. Every other one is already on the laptop and reached
+Ruche with the window stores (§5):
+
+| Dataset | Role | Source | Section |
+|---|---|---|---|
+| Paderborn | Source (15 bearings with artificial damage) and target (real damage) | Its university host, which refuses the laptop; Ruche's login node fetches it | §12.1-§12.3 |
+| PHM 2010 | Target: milling wear, stage 8 | A Kaggle copy, with your Kaggle token; the original host is gone | §12.4 |
+| CWRU, XJTU-SY, Nonastreda, MATWI; KAIST | Sources; KAIST is a target | Downloaded and windowed on the laptop | §5 |
+| Najafi thermal, MBHM, NASA milling | Optional; NASA milling is the fallback if PHM 2010 cannot be had | Not used by the runs of this runbook | - |
 
 **12.1 Download, on the login node** (several GB; resumable; the SHA-256 of every archive is
 recorded and verified). `nohup` keeps it running if your SSH session closes:
@@ -406,14 +424,15 @@ the end of this section.
 **12.3 Extract, test and build the window store** (one CPU job):
 
 ```bash
-sbatch --job-name=paderborn slurm/cpu.sbatch bash -c "python -m pdmfm.fetch extract paderborn && python -m pytest -o addopts= -q -rs -m data -k paderborn tests/test_real_data.py && python -m pdmfm.windows build paderborn && python -m pdmfm.features texts --dataset paderborn"
+sbatch --job-name=paderborn slurm/cpu.sbatch bash -c "python -m pdmfm.fetch extract paderborn && python -m pytest -o addopts= -q -rs -m data -k paderborn tests/test_real_data.py tests/test_sensors.py && python -m pdmfm.windows build paderborn && python -m pdmfm.features texts --dataset paderborn"
 ```
 
 The log `runs/logs/paderborn-*.out` must show:
 
 1. the extraction;
-2. `2 passed`: the acceptance tests, which check 32 bearings × 80 files, 64 kHz signals of
-   about 4 s, and speeds that match the settings;
+2. `3 passed`: the acceptance tests, which check 32 bearings × 80 files, 64 kHz signals of
+   about 4 s, speeds that match the settings, and that every channel is what
+   `pdmfm.sensors` says it is;
 3. `[windows] paderborn: N windows x 3 channels`, with N about 7,680 (3 windows per 4 s file);
 4. `[texts] paderborn: 4 contexts, 3 prototypes`: the context sentence of each operating
    setting, embedded now that the store exists (Qwen3 from the §8 cache, on the CPU).
@@ -430,6 +449,96 @@ finished archives. Or give it a longer partition (`sinfo -s`).
 2. On the laptop, run `python -m pdmfm.fetch verify paderborn`, `extract`,
    `pytest -m data -k paderborn` and `python -m pdmfm.windows build paderborn`.
 3. Upload `interim/windows/paderborn` as in §1 and §5.
+
+**12.4 PHM 2010, the milling target** (stage 8 only, so any time). No host serves it without
+a login: the original host is gone, IEEE DataPort needs a subscription, and the Hugging Face
+mirror `AI4Manufacturing/PHM2010` states no licence and repackages the data, so it is not
+used. The source is the Kaggle copy
+[`rabahba/phm-data-challenge-2010`](https://www.kaggle.com/datasets/rabahba/phm-data-challenge-2010):
+six cutters c1-c6, about 315 cut files each at 50 kHz, and wear files for c1, c4 and c6.
+
+*a. A Kaggle token* (laptop, once):
+
+1. Log in at kaggle.com, open the dataset page above, and accept any terms it shows.
+2. Your profile picture → **Settings** → **API** → **Create New Token**. Either a
+   `kaggle.json` file downloads, or a token string is shown: keep whichever you get.
+3. Send the file to Ruche (with a token string, skip this):
+
+   ```powershell
+   scp $HOME\Downloads\kaggle.json "${Ruche}:/workdir/$RucheLogin/"
+   ```
+
+The token is a password: never commit it and never put it inside `$WORKDIR/pdmfm`.
+
+*b. Download, on the login node* (about 10 GB; estimate):
+
+```bash
+cd "$WORKDIR/pdmfm" && source slurm/env.sh
+python -m pip install kaggle
+mkdir -p ~/.kaggle && mv "$WORKDIR/kaggle.json" ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
+# with a token string instead of the file:  export KAGGLE_API_TOKEN='<the string>'
+mkdir -p "$WORKDIR/phm2010-download" && cd "$WORKDIR/phm2010-download"
+nohup kaggle datasets download -d rabahba/phm-data-challenge-2010 --unzip > "$WORKDIR/pdmfm/runs/logs/phm2010-fetch.log" 2>&1 &
+tail -f "$WORKDIR/pdmfm/runs/logs/phm2010-fetch.log"
+```
+
+Ctrl+C stops the watching, not the download. It is finished when `jobs` (in the same session)
+or `pgrep -u $USER kaggle` shows nothing and the log has no error. If the session died
+midway, run the `kaggle` line again.
+
+*c. Place the per-cutter zips and verify them* (login node):
+
+```bash
+cd "$WORKDIR/phm2010-download"
+find . -maxdepth 3 | head -40
+mkdir -p "$PDMFM_DATA_ROOT/raw/phm2010"
+find . -name 'c[1-6].zip' -exec cp -v {} "$PDMFM_DATA_ROOT/raw/phm2010/" \;
+ls -lh "$PDMFM_DATA_ROOT/raw/phm2010"
+cd "$WORKDIR/pdmfm" && python -m pdmfm.fetch verify phm2010
+```
+
+- `find` must show `c1.zip` … `c6.zip`, perhaps in a subfolder. c1, c4 and c6 (labelled) are
+  required; c2, c3 and c5 are optional.
+- If it shows folders `c1/` … `c6/` instead of zips, zip each one so `verify` finds it: in the
+  folder that holds them,
+  `for c in c1 c2 c3 c4 c5 c6; do [ -d "$c" ] && python -m zipfile -c "$PDMFM_DATA_ROOT/raw/phm2010/$c.zip" "$c"/; done`.
+- `verify` records each file's SHA-256 and must end with `0 mismatched, 0 missing`.
+- A wear file inside `c3.zip` (the Kaggle page flags one copy as incorrect) is ignored: c3 is
+  unlabelled in the challenge, and the reader reads wear for c1, c4 and c6 only.
+
+*d. Extract, test and build the window store* (one CPU job; `cpu_med`, because about 1,900
+files at 50 kHz may take more than `cpu_short`'s hour):
+
+```bash
+sbatch --job-name=phm2010 --partition=cpu_med --time=04:00:00 slurm/cpu.sbatch bash -c "python -m pdmfm.fetch extract phm2010 && python -m pytest -o addopts= -q -rs -m data -k phm2010 tests/test_real_data.py tests/test_sensors.py && python -m pdmfm.windows build phm2010 && python -m pdmfm.features texts --dataset phm2010"
+```
+
+The log `runs/logs/phm2010-*.out` must show:
+
+1. the extraction;
+2. `3 passed`: 315 cuts for each of c1, c4 and c6, each with a wear value in µm that grows
+   from cut to cut; 7 columns per cut file; a dominant force line at a multiple of 173.3 Hz,
+   which confirms the commonly quoted 10,400 rpm; every channel as `pdmfm.sensors` describes
+   it;
+3. `[windows] phm2010: N windows …`;
+4. `[texts] phm2010: …`: its context sentences and wear-class descriptions, embedded.
+
+Then set `VERIFIED_ON_REAL_DATA = True` in `pdmfm/datasets/phm2010.py` on the laptop, commit,
+push, and `git pull` on Ruche when no job runs.
+
+- **A cut-count or wear test fails:** this copy is packaged differently. Send me
+  `find "$PDMFM_DATA_ROOT/extracted/phm2010" -maxdepth 3 | head -40` and the log.
+- **The spindle test fails:** its message names the measured line; send it to me
+  (`SPINDLE_RPM` is then corrected before the physics score uses it).
+- **The job reaches its limit:** submit it again (the zips are unpacked again from the start,
+  which is safe), or with `--partition=cpu_long --time=12:00:00`.
+- **`invalid partition specified`:** `sinfo -s` lists the CPU partitions and their time
+  limits; take one that allows 4 h.
+
+*e. Clean up* once the store is built: `rm -rf "$WORKDIR/phm2010-download"` (the zips are in
+`raw/phm2010`), and, if space is short, `rm -rf "$PDMFM_DATA_ROOT/extracted/phm2010"` (the
+store holds what the runs read; `extract` rebuilds it from the zips). Remove the token when
+you no longer need it: `rm ~/.kaggle/kaggle.json`, and delete it in Kaggle's settings.
 
 ## 13. Step 2: feature caches
 
@@ -463,8 +572,18 @@ sbatch --job-name=features-ast --time=04:00:00 slurm/job.sbatch \
 - Each log shows one progress line per chunk, with the encoding rate in windows per second.
 - Mantis features exist on the laptop already. Encoding them again here takes minutes and
   keeps every compared encoder on one machine.
-- **KAIST** (target, stage 8 only): the same commands with `--dataset kaist` encode it for
-  later. Gate 1 never reads it.
+- **The targets, KAIST and PHM 2010** (stage 8 only; Gate 1 and stages 4-7 never read
+  them): after §12.4, and with KAIST's store uploaded (§5),
+
+  ```bash
+  sbatch --job-name=features-stats-targets slurm/cpu.sbatch     python -m pdmfm.features extract --dataset kaist phm2010 --encoder stats --arms T F E
+  for encoder in mantis moment; do
+    sbatch --job-name=features-$encoder-targets --time=02:00:00 slurm/job.sbatch       python -m pdmfm.features extract --dataset kaist phm2010 --encoder $encoder --arms T F E --device cuda
+  done
+  ```
+
+  AST (arm S) and PatchTST follow only if Gate 1 picks them: the AST line above with
+  `--dataset kaist phm2010`, and the §14 feature line of each fold with the same datasets.
 
 `--time` is lower than the 24 h maximum, so the scheduler can start a job sooner. If a job
 reaches its limit, submit the same command again: cached windows are skipped.
@@ -837,6 +956,7 @@ Pack on Ruche (small; the login node is fine):
 cd "$WORKDIR/pdmfm" && tar --exclude='last.pt' -czf gate1-results.tar.gz runs/gate1 runs/patchtst runs/tune runs/planb runs/gate2 runs/rul runs/baselines runs/explain runs/pretrain runs/logs
 cd "$WORKDIR/pdmfm_data" && tar -czf features.tar.gz interim/features
 tar -czf paderborn-windows.tar.gz interim/windows/paderborn
+tar -czf phm2010-windows.tar.gz interim/windows/phm2010   # after §12.4
 ls -lh "$WORKDIR/pdmfm/gate1-results.tar.gz" features.tar.gz paderborn-windows.tar.gz
 ```
 
@@ -850,8 +970,10 @@ tar -xzf gate1-results.tar.gz
 cd D:\Project14\data
 scp "${Ruche}:/workdir/$RucheLogin/pdmfm_data/features.tar.gz" .
 scp "${Ruche}:/workdir/$RucheLogin/pdmfm_data/paderborn-windows.tar.gz" .
+scp "${Ruche}:/workdir/$RucheLogin/pdmfm_data/phm2010-windows.tar.gz" .
 tar -xzf features.tar.gz
 tar -xzf paderborn-windows.tar.gz
+tar -xzf phm2010-windows.tar.gz
 ```
 
 `runs/` is git-ignored, so the results stay out of commits. Ruche's directories are not backed
@@ -900,6 +1022,9 @@ encoder, as in §13, never collides.
 | `no modality ['…']; <dataset> has […]` (Plan B) | `--without` names a modality the dataset lacks | Use a name from that list |
 | `… was started with other settings or data; use a new --out` (PatchTST) | Resubmitted with other options, or the corpus changed (Paderborn added) | The original command, or `--out runs/patchtst/fold<k>-v2`. The encoder is then named `patchtst-fold<k>-v2`: extract its features with `--checkpoint runs/patchtst/fold<k>-v2/model` and use the candidate `"patchtst-fold{fold}-v2:T"` |
 | `could not extract K001.rar` | No RAR tool | §12.2 |
+| `401 Unauthorized`, `403 Forbidden` or `Could not find kaggle.json` (PHM 2010) | Token missing, unreadable or revoked, or the dataset's terms not accepted | §12.4a again; `chmod 600 ~/.kaggle/kaggle.json`; open the dataset page logged in and accept its terms |
+| `kaggle: error: unrecognized arguments: -d` | A newer Kaggle CLI | Drop `-d`: `kaggle datasets download rabahba/phm-data-challenge-2010 --unzip` |
+| `verify phm2010`: `missing c1.zip` (or c4, c6) | The zips are elsewhere or the copy holds folders | §12.4c: the `find` listing, or zip the folders |
 | `… was pretrained for fold j; fold k must use its own backbone` (fine-tuning) | The `--init` path names a fixed fold | Keep `{fold}` in the path, in quotes (§16.10) |
 | `… was pretrained on X features, not Y` (fine-tuning) | `--encoder` differs from the pretraining's | The same `$ENCODER` and `$ARMS` as §16.9 |
 | `[pretrain] <dataset>: skipped (…)` | That dataset's store or features are missing | §12-§14; then a new `--run-id` (the datasets are part of the settings) |
@@ -934,6 +1059,7 @@ After the §10 block, from `$WORKDIR/pdmfm`:
 | Status | `bash slurm/status.sh` |
 | 0 | `sbatch slurm/checks.sbatch` · GPU check (§11) · `sbatch slurm/net_check.sbatch` |
 | 1 | `nohup bash slurm/fetch_paderborn.sh > runs/logs/paderborn-fetch.log 2>&1 &` (login), then the §12.3 job |
+| 1b | §12.4: Kaggle token, `kaggle datasets download … --unzip` (login), zips to `raw/phm2010`, `fetch verify phm2010`, the §12.4d job; then the target caches (§13, end) |
 | 2 | `sbatch --job-name=features-stats slurm/cpu.sbatch python -m pdmfm.features extract --dataset cwru xjtu_sy nonastreda matwi paderborn --encoder stats --arms T F E` and the §13 loop |
 | 3 | The §14 loop |
 | 4 | The §15 command |

@@ -56,7 +56,9 @@ class PHM2010:
         for cutter_dir in sorted(p for p in self.root.iterdir() if p.is_dir()):
             cutter = cutter_dir.name
             wear_files = list(cutter_dir.rglob("*wear*.csv"))
-            wear = read_wear(wear_files[0]) if wear_files else {}
+            # c2, c3, c5 are unlabelled in the challenge; a mirror's wear file for them (one
+            # Kaggle copy of c3.zip has one, flagged as incorrect) is ignored
+            wear = read_wear(wear_files[0]) if wear_files and cutter in LABELLED else {}
             cuts = []
             for path in cutter_dir.rglob("*.csv"):
                 match = _CUT.search(path.stem)

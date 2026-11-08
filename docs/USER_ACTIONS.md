@@ -10,11 +10,11 @@ like. Commands for the laptop assume the development environment is loaded first
 
 | # | Step | Unblocks | Effort |
 |---|---|---|---|
-| 1 | Commit and push the week-8 write-up (docs only, on top of `a7716ec`, which holds the pretraining code); check that CI is green for `a7716ec` | Ruche clones the repository from GitHub | 5 min |
+| 1 | Commit and push the week-8 write-up (docs only, on top of `c4f4ac0`; `a7716ec` and `c4f4ac0` hold the code); check that CI is green for `c4f4ac0` | Ruche clones the repository from GitHub | 5 min |
 | 2 | Run the Ruche runbook (`docs/RUCHE_RUNBOOK.md`), following its **run-order table** (steps 0-8): checks, Paderborn, caches, PatchTST, Gate 1, nested tuning, Plan B, Gate 2, RUL, baselines, then pretraining (§16.9) and fine-tuning from it (§16.10), then the download | Everything from Gate 1 to stage 7 with the winning encoder | about 3-4 h of your time over a few days, the rest is queue and compute |
-| 3 | Download PHM 2010 from Kaggle (needs your Kaggle account; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
+| 3 | Download PHM 2010 from Kaggle, on Ruche: runbook §12.4, step 1b of its run order (needs your Kaggle account and API token; I cannot log in for you) | Milling wear-transfer target (Goal 2); milling physics score | 15-30 min |
 | — | Decisions A-E taken; F (second paper) and G (C-MAPSS) deferred, as you asked (section 4) | — | — |
-| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs), `3103e5e` and `e269b1d` (week 7), `07638c0` (channel descriptions, nested selection), `a7716ec` (pretraining); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
+| — | Done: GitHub repository, CI, pre-commit hook; commits `1a53d64`, `b837e80`, `965d479`, `84f4add`, `a10b2b7`, `b2b7d4d` (MATWI, Gate 2, RUL), `6866791` (week-6 docs), `3103e5e` and `e269b1d` (week 7), `07638c0` (channel descriptions, nested selection), `a7716ec` (pretraining), `c4f4ac0` (fine-tuning takes the backbone's width); MATWI downloaded (18 GB, every file checked against the publisher's MD5) and built | — | — |
 
 ---
 
@@ -22,9 +22,10 @@ like. Commands for the laptop assume the development environment is loaded first
 
 `a7716ec` holds this week's code: `pdmfm/pretrain.py` (stage 6), fine-tuning from it
 (`planb --init`, stage 7), the model hooks they need, `tests/test_pretrain.py`, the runbook's
-run-order table and §16.9-§16.10, and the status script's pretraining section. Still to
-commit: the week-8 results and the progress review in `PROJECT_LOG.md`, `docs/CI.md` and this
-file.
+run-order table and §16.9-§16.10, and the status script's pretraining section. `c4f4ac0`
+adds one fix: fine-tuning takes the backbone's width and head (Ruche tunes `d` over {64, 256}
+from scratch; one backbone of width 256 serves every dataset). Still to commit: the week-8
+results and the progress review in `PROJECT_LOG.md`, `docs/CI.md` and this file.
 
 ```powershell
 cd "C:\Users\ali_a\OneDrive\Desktop\Multimodal AI for Predictive Maintenance"
@@ -87,6 +88,12 @@ a run id such as `planb-mantis-paderborn`.
 
 ## 3. PHM 2010 milling data (Kaggle)
 
+**Recommended: on Ruche**, with the Kaggle command-line tool and your API token:
+`docs/RUCHE_RUNBOOK.md` §12.4 has every command (token, download, verify, the extraction
+and acceptance-test job, the window store, clean-up), and §13 the target caches. The store
+comes back to the laptop with the §17 download, so the laptop route below is needed only
+if Ruche cannot reach Kaggle.
+
 **Why.** The plan's second milling target (wear regression, leave-one-cutter-out), and the
 only milling set with a known spindle speed, which the physics score needs. The reader
 (`pdmfm/datasets/phm2010.py`) is written against the challenge description but has never
@@ -109,7 +116,8 @@ Take the original per-cutter zips (`c1.zip` … `c6.zip`), not a repackaged vers
 Do not use the Hugging Face mirror `AI4Manufacturing/PHM2010`. It is gated, states no
 licence and has been converted to parquet.
 
-**Place and check.**
+**Place and check (laptop route).** Download with the browser (the dataset page's
+**Download** button), unzip that archive, and take the `c*.zip` files inside it:
 
 ```powershell
 # c1.zip, c4.zip, c6.zip are required (labelled); c2, c3, c5 are optional (pretraining only)

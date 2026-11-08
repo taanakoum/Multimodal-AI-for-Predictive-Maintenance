@@ -76,7 +76,9 @@ REAL = ["cwru", "kaist", "xjtu_sy", "nonastreda", "matwi", "paderborn", "phm2010
 @pytest.mark.parametrize(
     "dataset",
     [
-        pytest.param(d, marks=pytest.mark.data(d, extracted=d in ("xjtu_sy", "paderborn")))
+        pytest.param(
+            d, marks=pytest.mark.data(d, extracted=d in ("xjtu_sy", "paderborn", "phm2010"))
+        )
         for d in REAL
     ],
 )
