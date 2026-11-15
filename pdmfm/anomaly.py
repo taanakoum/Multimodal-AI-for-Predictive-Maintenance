@@ -62,6 +62,7 @@ SIGMAS = 3.0
 CONSECUTIVE = 3
 TARGETS = ("kaist", "paderborn")  # held out until stage 8
 PROTOCOL = {"cwru": "windows", "kaist": "windows", "paderborn": "windows", "xjtu_sy": "onset"}
+PROTOCOL.update(nonastreda="milling", matwi="milling")
 
 
 # ----------------------------------------------------------------------------- scores
@@ -169,12 +170,18 @@ def handcrafted(store: WindowStore, feature_store: FeatureStore):
     """The ``stats`` arms (F, plus E for bearings) and every channel's level descriptors."""
     arm_text = "F+E" if "E" not in arms.unavailable(store) else "F"
     x, done = encoder_features(store, feature_store, f"stats:{arm_text}")
-    levels = np.asarray(store.levels, dtype=np.float32).reshape(len(store), -1)
+    channels = [
+        i for i, name in enumerate(store.channels) if store.dataset != "nonastreda" or name != "fz"
+    ]
+    levels = np.asarray(store.levels[:, channels], dtype=np.float32).reshape(len(store), -1)
     return np.concatenate([x, levels], axis=1), done
 
 
 def log_rms(store: WindowStore) -> np.ndarray:
-    return np.asarray(store.levels[:, :, 0], dtype=float)  # (N, C) log10 RMS
+    channels = [
+        i for i, name in enumerate(store.channels) if store.dataset != "nonastreda" or name != "fz"
+    ]
+    return np.asarray(store.levels[:, channels, 0], dtype=float)
 
 
 def score_sets(store: WindowStore, feature_store: FeatureStore, feature_texts: list[str]):
@@ -254,10 +261,12 @@ def onset_protocol(store: WindowStore, sets: dict) -> pd.DataFrame:
             scores = scorer(x[support], x[later])
             above = scores > threshold
             alarm = first_alarm(above)
-            alarm_index = None if alarm is None else alarm + ONSET_SUPPORT
+            first_index = None if alarm is None else alarm + ONSET_SUPPORT
+            alarm_index = None if first_index is None else first_index + CONSECUTIVE - 1
             record = {
                 "score": name, "unit": unit, "snapshots": len(rows), "fpt": fpt,
                 "alarm": alarm_index, "threshold": threshold,
+                "first_exceedance": first_index,
             }  # fmt: skip
             if fpt is not None and fpt > ONSET_SUPPORT:
                 post = np.arange(ONSET_SUPPORT, len(rows)) >= fpt
@@ -279,6 +288,9 @@ def _numbers(table: pd.DataFrame, column: str) -> np.ndarray:
 def summarize(results: pd.DataFrame, protocol: str) -> pd.DataFrame:
     if not len(results):
         return pd.DataFrame()
+    if protocol == "milling":
+        columns = ["auroc", "auprc", "false_alarm_rate", "detection_rate"]
+        return pd.DataFrame(results.groupby("score", as_index=False)[columns].mean())
     if protocol == "windows":
         grouped = results.groupby(["score", "k_h"])[["auroc", "auprc", "far_at_95"]]
         spread = pd.DataFrame(grouped.std()).add_suffix("_std")
@@ -306,7 +318,79 @@ def summarize(results: pd.DataFrame, protocol: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def milling_protocol(store: WindowStore, sets: dict, seed: int = 0) -> pd.DataFrame:
+    """Healthy-only fits; thresholds from validation tools, never test labels.
+
+    Worn-tool novelty is the positive class. Missing wear labels are not negatives.
+    The test-derived FAR@95 remains a descriptive ROC quantity only.
+    """
+    from pdmfm.train import bag_mean
+
+    manifest = store.manifest
+    records = []
+    for name, (scorer, features, done) in sets.items():
+        selected = manifest.loc[done]
+        keys, values = bag_mean(features[done], selected["bag"].astype(str).to_numpy())
+        bags = selected.groupby("bag", sort=False).first().loc[keys].reset_index()
+        healthy = bags.class_key.eq("sharp").to_numpy()
+        labelled = bags.class_key.isin(["sharp", "used", "dulled"]).to_numpy()
+        for fold in range(1, protocols.N_FOLDS + 1):
+            split = protocols.SOURCE_FOLDS[store.dataset](bags, fold)
+            split.assert_unit_disjoint(bags)
+            support = np.flatnonzero(split.train & healthy)
+            calibration = np.flatnonzero(split.val & healthy)
+            test = np.flatnonzero(split.test & labelled)
+            base = {
+                "score": name,
+                "fold": fold,
+                "healthy_train": len(support),
+                "healthy_validation": len(calibration),
+                "test_bags": len(test),
+            }
+            if len(support) < 3 or len(calibration) < 2 or not len(test):
+                records.append(
+                    {
+                        **base,
+                        "status": "insufficient_healthy_support",
+                        **dict.fromkeys(
+                            ["auroc", "auprc", "far_at_95", "false_alarm_rate", "detection_rate"],
+                            np.nan,
+                        ),
+                    }
+                )
+                continue
+            rng = np.random.default_rng((seed, fold))
+            support = rng.choice(support, min(256, len(support)), replace=False)
+            # Score calibration and test together so stochastic scorers share one fit.
+            joined = np.concatenate([calibration, test])
+            scores = scorer(values[support], values[joined])
+            threshold = float(np.quantile(scores[: len(calibration)], 0.95))
+            score = scores[len(calibration) :]
+            anomalous = ~healthy[test]
+            above = score > threshold
+            records.append(
+                {
+                    **base,
+                    "status": "ok",
+                    "threshold": threshold,
+                    **detection_metrics(score, anomalous),
+                    "false_alarm_rate": float(above[~anomalous].mean())
+                    if (~anomalous).any()
+                    else np.nan,
+                    "detection_rate": float(above[anomalous].mean()) if anomalous.any() else np.nan,
+                }
+            )
+    return pd.DataFrame(records)
+
+
 def _markdown(run_id: str, dataset: str, protocol: str, summary: pd.DataFrame) -> str:
+    if protocol == "milling":
+        return (
+            f"# Healthy-only worn-tool novelty: {dataset} ({run_id})\n\n"
+            "Unit-disjoint outer folds; threshold = validation healthy 95th percentile.\n"
+            "FAR@95 uses test positives for ROC description only. Missing support is "
+            "reported in results.csv.\n\n```text\n" + summary.to_string(index=False) + "\n```\n"
+        )
     lines = [f"# Anomaly detection: {run_id}", "", f"{dataset}, {protocol} protocol.", ""]
     if protocol == "windows":
         lines += [
@@ -361,6 +445,8 @@ def run(
     started = time.perf_counter()
     if protocol == "windows":
         results = window_protocol(store, sets, seed)
+    elif protocol == "milling":
+        results = milling_protocol(store, sets, seed)
     else:
         results = onset_protocol(store, sets)
     summary = summarize(results, protocol)

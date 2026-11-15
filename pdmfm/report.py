@@ -83,7 +83,12 @@ def tasks_of(table: pd.DataFrame) -> list[str]:
     if {"y_reg", "pred_reg"} <= set(table.columns):
         tasks.append("reg")
         y = table["y_reg"].to_numpy(dtype=float)
-        if bool(np.any(y < 1 - 1e-6)) and float(np.nanmax(y)) <= 1.0:
+        normalized = (
+            bool(np.all(table["target_kind"].to_numpy() == "normalized_rul"))
+            if "target_kind" in table
+            else bool(np.any(y < 1 - 1e-6)) and float(np.nanmax(y)) <= 1.0
+        )
+        if normalized:
             tasks.append("reg_post")
     return tasks
 

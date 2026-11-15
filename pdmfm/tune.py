@@ -42,7 +42,7 @@ from pdmfm.model.inputs import FOLD_BASELINE
 from pdmfm.paths import REPO_ROOT
 from pdmfm.planb import FOLDS, prepare_inputs
 from pdmfm.train import TrainConfig, fit
-from pdmfm.utils import write_json_atomic
+from pdmfm.utils import feature_identity, run_identity, write_json_atomic
 from pdmfm.windows import WindowStore
 
 TUNABLE = {
@@ -124,6 +124,10 @@ def search(
 ) -> dict:
     """Score every configuration on the inner splits of every outer fold; write
     ``results.csv`` and ``best.json``; return the report (``chosen``, ``per_fold``)."""
+    if encoder.startswith("patchtst"):
+        raise ValueError(
+            "nested search needs inner-split pretrained features; use a frozen encoder"
+        )
     out = (Path(out_root) if out_root else REPO_ROOT / "runs" / "tune") / run_id
     out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.csv"
@@ -135,6 +139,21 @@ def search(
         )
     records = done.to_dict("records")
     manifest = WindowStore.open(dataset, window_root).manifest
+    run_identity(
+        out,
+        {
+            "version": 2,
+            "dataset": dataset,
+            "encoder": encoder,
+            "arms": arm_list,
+            "config": base.as_dict(),
+            "grid": grid,
+            "seed": seed,
+            "photos": photos,
+            "store": WindowStore.open(dataset, window_root).key,
+            "features": feature_identity(dataset, feature_root, encoder, arm_list),
+        },
+    )
     options = {
         "photos": photos,
         "without": (),

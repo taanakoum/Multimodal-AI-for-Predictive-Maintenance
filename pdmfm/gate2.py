@@ -56,7 +56,7 @@ from pdmfm.model.inputs import FOLD_BASELINE
 from pdmfm.paths import REPO_ROOT
 from pdmfm.planb import FOLDS, prepare_inputs, student_t, without_each
 from pdmfm.train import TrainConfig, fit, predict, selection_score
-from pdmfm.utils import write_json_atomic
+from pdmfm.utils import feature_identity, run_identity, write_json_atomic
 from pdmfm.windows import WindowStore
 
 RECIPE = {"lr": 3e-4, "schedule": "cosine", "input_dropout": 0.3}
@@ -140,15 +140,36 @@ def search(
     window_root: Path | None = None,
     feature_root: Path | None = None,
     log=print,
+    screen_epochs: int = 0,
 ) -> dict:
     """Score every candidate on every inner fold of the outer ``folds``; write
     ``results.csv``, ``ranking.csv``, ``decision.json`` and ``summary.md``. Resumes."""
+    if encoder.startswith("patchtst"):
+        raise ValueError(
+            "nested search needs inner-split pretrained features; use a frozen encoder"
+        )
     out = (Path(out_root) if out_root else REPO_ROOT / "runs" / "gate2") / run_id
     out.mkdir(parents=True, exist_ok=True)
     results_path = out / "results.csv"
     records = pd.read_csv(results_path).to_dict("records") if results_path.is_file() else []
     manifest = WindowStore.open(dataset, window_root).manifest
     configs = candidates(base, names)
+    run_identity(
+        out,
+        {
+            "version": 2,
+            "dataset": dataset,
+            "encoder": encoder,
+            "arms": arm_list,
+            "config": base.as_dict(),
+            "names": names,
+            "seed": seed,
+            "photos": photos,
+            "screen_epochs": screen_epochs,
+            "store": WindowStore.open(dataset, window_root).key,
+            "features": feature_identity(dataset, feature_root, encoder, arm_list),
+        },
+    )
     options = {
         "photos": photos,
         "without": (),
@@ -161,6 +182,12 @@ def search(
     per_split = dataset in FOLD_BASELINE  # the level baseline comes from training units
     prepared = None
     for k in folds:
+        finalists = None
+        screen_path = out / f"screen-fold{k}.json"
+        if screen_epochs and screen_path.exists():
+            import json
+
+            finalists = json.loads(screen_path.read_text(encoding="utf-8"))["finalists"]
         for inner in protocols.inner_folds(dataset, manifest, k):
             inner.assert_unit_disjoint(manifest)
             todo = [
@@ -184,6 +211,24 @@ def search(
                 labelled &= np.isfinite(inputs.y_reg)
             train_rows = np.flatnonzero(inner.train & labelled)
             val_rows = np.flatnonzero(inner.val & labelled)
+            if screen_epochs and finalists is None:
+                screening = {}
+                for name in configs:
+                    if name not in REFERENCES:
+                        screening[name] = score_fit(
+                            inputs,
+                            train_rows,
+                            val_rows,
+                            replace(configs[name], epochs=min(screen_epochs, base.epochs)),
+                            seed,
+                            log,
+                        )["score"]
+                finalists = sorted(screening, key=lambda n: (-screening[n], n))[:2]
+                write_json_atomic(
+                    screen_path, {"split": inner.name, "scores": screening, "finalists": finalists}
+                )
+            if finalists is not None:
+                todo = [n for n in todo if n in REFERENCES or n in finalists]
             for name in todo:
                 scores = score_fit(inputs, train_rows, val_rows, configs[name], seed, log)
                 records.append({"candidate": name, "outer": k, "split": inner.name, **scores})
@@ -373,6 +418,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--d", type=int, default=256)
     parser.add_argument("--no-photos", action="store_true")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--screen-epochs",
+        type=int,
+        default=10,
+        help="screen fusion candidates on the first inner split; 0 runs all",
+    )
     parser.add_argument("--out", type=Path)
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
     args = parser.parse_args(argv)
@@ -384,6 +435,7 @@ def main(argv: list[str] | None = None) -> None:
     search(
         args.dataset, args.encoder, tuple(args.arms), args.run_id, base, tuple(args.candidates),
         args.folds, args.seed, photos=not args.no_photos, out_root=args.out,
+        screen_epochs=args.screen_epochs,
     )  # fmt: skip
 
 
