@@ -1,8 +1,9 @@
-# Dot-source in PowerShell before working:  . .\scripts\env\dev.ps1
-$env:PDMFM_DATA_ROOT = "D:\Project14\data"
-$env:HF_HOME = "D:\Project14\hf_cache"
-$env:UV_PROJECT_ENVIRONMENT = "D:\Project14\.venv"
-$env:UV_LINK_MODE = "copy"
-$env:PYTHONIOENCODING = "utf-8"
-& "D:\Project14\.venv\Scripts\Activate.ps1"
-Write-Host "pdmfm dev env: data=$env:PDMFM_DATA_ROOT hf=$env:HF_HOME"
+# Optional helper; caller-provided paths take precedence.
+if (-not $env:PDMFM_DATA_ROOT) { $env:PDMFM_DATA_ROOT = Join-Path $PWD 'data' }
+if (-not $env:HF_HOME) { $env:HF_HOME = Join-Path $env:PDMFM_DATA_ROOT 'hf_cache' }
+if (-not $env:UV_PROJECT_ENVIRONMENT) { $env:UV_PROJECT_ENVIRONMENT = Join-Path $PWD '.venv' }
+$env:UV_LINK_MODE = 'copy'
+$env:PYTHONIOENCODING = 'utf-8'
+$activation = Join-Path $env:UV_PROJECT_ENVIRONMENT 'Scripts/Activate.ps1'
+if (Test-Path -LiteralPath $activation) { . $activation }
+Write-Host "pdmfm: data=$env:PDMFM_DATA_ROOT"
