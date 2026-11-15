@@ -22,3 +22,4 @@ if [ -n "${SLURM_JOB_ID:-}" ]; then
 fi
 export PYTHONUNBUFFERED=1  # logs show progress while a job runs
 export PYTHONIOENCODING=utf-8
+export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"

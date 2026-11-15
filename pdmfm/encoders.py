@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from pdmfm import preprocess as pp
+from pdmfm.compute import autocast
 
 
 def hf_revision(repo: str) -> str | None:
@@ -60,13 +61,20 @@ def _torch_device(device: str):
 
 
 class Encoder:
+    precision: str = "fp32"
     name = "encoder"
     dim = 0
     input_kind = "series"
     repo: str | None = None
 
     def signature(self) -> dict:
-        return {"encoder": self.name, "dim": self.dim, "repo": self.repo, "revision": self.revision}
+        return {
+            "encoder": self.name,
+            "dim": self.dim,
+            "repo": self.repo,
+            "revision": self.revision,
+            "precision": getattr(self, "precision", "fp32"),
+        }
 
     @property
     def revision(self) -> str | None:
@@ -108,16 +116,22 @@ class MantisEncoder(Encoder):
         from mantis.architecture import MantisV1  # pyright: ignore[reportMissingImports]
         from mantis.trainer import MantisTrainer  # pyright: ignore[reportMissingImports]
 
-        _torch_device(device)
+        self.device = _torch_device(device)
         network = MantisV1(device=device).from_pretrained(self.repo)
         self.model = MantisTrainer(device=device, network=network)
         self.batch_size = batch_size
 
     def encode(self, x: np.ndarray) -> np.ndarray:
+        import torch
+
+        if getattr(self, "precision", "fp32") == "bf16":
+            raise ValueError("Mantis transform returns numpy; use fp32 precision")
         x = np.asarray(x, dtype=np.float32)
-        parts = [
-            np.asarray(self.model.transform(b[:, None, :])) for b in _batches(x, self.batch_size)
-        ]
+        with torch.inference_mode():
+            parts = [
+                np.asarray(self.model.transform(b[:, None, :]))
+                for b in _batches(x, self.batch_size)
+            ]
         return np.concatenate(parts).astype(np.float32)
 
 
@@ -141,7 +155,7 @@ class MomentEncoder(Encoder):
         import torch
 
         out = []
-        with torch.no_grad():
+        with torch.inference_mode(), autocast(self.device, getattr(self, "precision", "fp32")):
             for b in _batches(np.asarray(x, dtype=np.float32), self.batch_size):
                 batch = torch.from_numpy(b[:, None, :]).to(self.device)
                 embeddings = torch.as_tensor(self.model(x_enc=batch).embeddings)
@@ -174,7 +188,7 @@ class PatchTSTEncoder(Encoder):
         import torch
 
         out = []
-        with torch.no_grad():
+        with torch.inference_mode(), autocast(self.device, getattr(self, "precision", "fp32")):
             for b in _batches(np.asarray(x, dtype=np.float32), self.batch_size):
                 values = torch.from_numpy(b[:, :, None]).to(self.device)  # (m, 512, 1 channel)
                 hidden = self.model(past_values=values).last_hidden_state  # (m, 1, patches, d)
@@ -244,7 +258,7 @@ class ASTEncoder(Encoder):
 
         wave = pp.resample(np.asarray(x, dtype=np.float32), self.input_rate, self.AUDIO_RATE)
         out = []
-        with torch.no_grad():
+        with torch.inference_mode(), autocast(self.device, getattr(self, "precision", "fp32")):
             for b in _batches(wave, self.batch_size):
                 features = self.extractor(
                     list(b), sampling_rate=int(self.AUDIO_RATE), return_tensors="pt"
@@ -290,6 +304,7 @@ class DinoV2Encoder:
     and thermal images to 224x224 and 2x2 (5 tokens); MATWI insert crops (1.5:1) to 224x336
     and 2x3 (7 tokens)."""
 
+    precision: str = "fp32"
     name = "dinov2"
     dim = 384
     repo = "facebook/dinov2-small"
@@ -327,6 +342,7 @@ class DinoV2Encoder:
             "revision": hf_revision(self.repo),
             "size": self.SIZE[kind],
             "grid": self.GRID[kind],
+            "precision": getattr(self, "precision", "fp32"),
         }
 
     def n_tokens(self, kind: str) -> int:
@@ -369,7 +385,7 @@ class DinoV2Encoder:
         height, width = self.SIZE[kind]
         grid_h, grid_w = height // 14, width // 14
         out = []
-        with torch.no_grad():
+        with torch.inference_mode(), autocast(self.device, getattr(self, "precision", "fp32")):
             for start in range(0, len(paths), self.batch_size):
                 chunk = range(start, min(start + self.batch_size, len(paths)))
                 pixels = np.stack(

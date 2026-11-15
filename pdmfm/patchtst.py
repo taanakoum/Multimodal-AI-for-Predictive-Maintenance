@@ -172,7 +172,7 @@ def pretrain(
     state_path = out_dir / "last.pt"
     start_epoch, best, history = 0, float("inf"), []
     if state_path.is_file():
-        state = torch.load(state_path, map_location=device_, weights_only=False)
+        state = torch.load(state_path, map_location="cpu", weights_only=False)
         if state["settings"] != settings:
             raise ValueError(f"{out_dir} was started with other settings or data; use a new --out")
         model.load_state_dict(state["model"])

@@ -83,11 +83,12 @@ VIEWS: dict[str, tuple[dict, dict]] = {
     "nonastreda": ({"force": None}, {"photo": None}),
     "matwi": ({"force": None}, {"photo": None}),
 }
-VERSION = 1
+VERSION = 2
 
 
 @dataclass(frozen=True)
 class PretrainConfig:
+    precision: str = "auto"
     epochs: int = 100
     batch_size: int = 256
     lr: float = 3e-4
@@ -115,7 +116,7 @@ class PretrainConfig:
         return TrainConfig(
             epochs=self.epochs, batch_size=self.batch_size, lr=self.lr, d=self.d,
             dropout=self.dropout, kl_epochs=self.kl_epochs, head=self.head,
-            fusion=self.fusion, device=self.device,
+            fusion=self.fusion, device=self.device, precision=self.precision,
         )  # fmt: skip
 
 
@@ -559,7 +560,7 @@ def pretrain_one(
     start, best, history = 0, -np.inf, []
     last_path = out / "last.pt"
     if last_path.is_file():
-        state = torch.load(last_path, map_location=device, weights_only=False)
+        state = torch.load(last_path, map_location="cpu", weights_only=False)
         if state["settings_key"] != settings_key:
             raise ValueError(f"{out} was started with other settings or data; use another run id")
         pre.load_state_dict(state["model"])
@@ -568,9 +569,12 @@ def pretrain_one(
         rng = state["rng"]
         torch.set_rng_state(state["torch_rng"])
         generator.set_state(state["generator"])
+        if device.type == "cuda" and state.get("cuda_rng") is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
         start, best, history = state["epoch"], state["best"], state["history"]
         log(f"[pretrain] fold {fold} seed {seed}: resuming after epoch {start}")
-    amp = device.type == "cuda"
+    from pdmfm.compute import autocast
+
     started = time.perf_counter()
     for epoch in range(start, cfg.epochs):
         pre.train()
@@ -580,7 +584,7 @@ def pretrain_one(
         for _ in range(steps):
             source = sources[int(rng.choice(len(sources), p=weights))]
             rows = sample_rows(source, cfg.batch_size, rng)
-            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=amp):
+            with autocast(device, cfg.precision):
                 losses = step_losses(pre, source, rows, cfg, annealing, generator, train_cfg)
             weight = {"sup": cfg.w_sup, "mask": cfg.w_mask, "nce": cfg.w_nce}
             total = sum(weight[k] * v.float() for k, v in losses.items())
@@ -615,6 +619,7 @@ def pretrain_one(
                 "settings_key": settings_key, "model": pre.state_dict(),
                 "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
                 "rng": rng, "torch_rng": torch.get_rng_state(), "generator": generator.get_state(),
+                "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
                 "epoch": epoch + 1, "best": best, "history": history,
             },
             out / "last.tmp",
@@ -655,29 +660,42 @@ def run(
     window_root: Path | None = None,
     feature_root: Path | None = None,
     log=print,
+    per_fold: dict[int, dict] | None = None,
+    encoder_choices: dict[int, str] | None = None,
 ) -> Path:
     out = (Path(out_root) if out_root else REPO_ROOT / "runs" / "pretrain") / run_id
     out.mkdir(parents=True, exist_ok=True)
     records = []
+    base_cfg = cfg
     for fold in folds:
-        sources = load_sources(datasets, encoder, arm_list, fold, photos, window_root,
+        cfg = replace(
+            base_cfg,
+            **{k: v for k, v in (per_fold or {}).get(fold, {}).items() if k in base_cfg.as_dict()},
+        )
+        fold_encoder, fold_arms = encoder, arm_list
+        if encoder_choices is not None:
+            from pdmfm.probe import parse_candidate
+
+            if fold not in encoder_choices:
+                raise ValueError(f"no encoder choice for fold {fold}")
+            fold_encoder, fold_arms = parse_candidate(encoder_choices[fold])
+        sources = load_sources(datasets, fold_encoder, fold_arms, fold, photos, window_root,
                                feature_root, log)  # fmt: skip
         for seed in seeds:
             meta = {
-                "version": VERSION, "fold": fold, "seed": seed, "encoder": encoder,
-                "arms": list(arm_list), "photos": photos, "config": cfg.as_dict(),
+                "version": VERSION, "fold": fold, "seed": seed, "encoder": fold_encoder,
+                "arms": list(fold_arms), "photos": photos, "config": cfg.as_dict(),
                 "channel_embedding": CHANNEL_EMBEDDING,
                 "datasets": [s.name for s in sources],
                 "windows": {s.name: int(len(s.train_rows)) for s in sources},
+                "inputs": {s.name: s.inputs.description for s in sources},
+                "train_units": {s.name: sorted(set(s.units[s.train_rows])) for s in sources},
             }  # fmt: skip
             folder = out / f"fold{fold}-seed{seed}"
             summary_path = folder / "summary.json"
             if summary_path.is_file():
                 done = json.loads(summary_path.read_text(encoding="utf-8"))
-                if (
-                    done.get("config") == meta["config"]
-                    and done.get("datasets") == meta["datasets"]
-                ):
+                if all(done.get(k) == v for k, v in meta.items()):
                     log(f"[pretrain] fold {fold} seed {seed}: done earlier, skipped")
                     records.append(done)
                     continue
@@ -717,7 +735,7 @@ def summarize(out: Path, records: list[dict]) -> None:
 
 
 def initialize(model: nn.Module, path: str | Path, dataset: str, fold: int | None,
-               encoder: str | None = None, log=print) -> dict:  # fmt: skip
+               encoder: str | None = None, log=print, train_units=None) -> dict:  # fmt: skip
     """Load a pretrained backbone into a Plan B (or Gate-2) model before fine-tuning.
 
     A source dataset's model takes its pretrained parameters (shared and its own heads; the
@@ -726,6 +744,10 @@ def initialize(model: nn.Module, path: str | Path, dataset: str, fold: int | Non
     another fold's pretraining saw this fold's test units."""
     checkpoint = torch.load(Path(path), map_location="cpu", weights_only=False)
     meta, backbone = checkpoint["meta"], checkpoint["backbone"]
+    if train_units is not None and dataset in meta["datasets"]:
+        seen = meta.get("train_units", {}).get(dataset)
+        if seen is None or not set(seen) <= set(train_units):
+            raise ValueError("pretrained units overlap validation/test or lack unit provenance")
     if dataset in meta["datasets"] and fold is not None and meta["fold"] != fold:
         raise ValueError(
             f"{path} was pretrained for fold {meta['fold']}; fold {fold} must use its own "
@@ -794,7 +816,32 @@ def architecture(cfg: TrainConfig, fold: int, seed: int, log=print) -> TrainConf
 # ----------------------------------------------------------------------------- command line
 
 
+def shared_choices(paths: list[Path]) -> dict[int, dict]:
+    """Only unanimous source choices override a shared backbone's defaults.
+
+    Disagreeing fusion choices fall back to late experts. Dataset-specific learning-rate
+    and width choices do not silently overwrite one another through file ordering.
+    """
+    from pdmfm.planb import load_per_fold
+
+    choices = [load_per_fold(path) for path in paths]
+    folds = sorted({k for item in choices for k in item})
+    result = {}
+    for fold in folds:
+        options = [item.get(fold, {}) for item in choices]
+        keys = {k for option in options for k in option}
+        result[fold] = {}
+        for key in keys:
+            values = [option.get(key) for option in options]
+            if values[0] is not None and all(value == values[0] for value in values):
+                result[fold][key] = values[0]
+            elif key == "fusion":
+                result[fold][key] = "late"
+    return result
+
+
 def main(argv: list[str] | None = None) -> None:
+
     parser = argparse.ArgumentParser(
         prog="python -m pdmfm.pretrain", description=(__doc__ or "pdmfm").splitlines()[0]
     )
@@ -821,7 +868,10 @@ def main(argv: list[str] | None = None) -> None:
         "--fusion", default="late", choices=FUSIONS, help="late (Plan B) or the Gate-2 winner"
     )
     parser.add_argument("--no-photos", action="store_true")
+    parser.add_argument("--per-fold", type=Path, nargs="+", help="fold-specific tune/Gate-2 files")
+    parser.add_argument("--gate1", type=Path, help="Gate-1 report with per_fold_winner")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--precision", choices=("auto", "fp32", "bf16"), default="auto")
     parser.add_argument("--out", type=Path, help="default: runs/pretrain/")
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
     args = parser.parse_args(argv)
@@ -836,10 +886,15 @@ def main(argv: list[str] | None = None) -> None:
         weight_decay=args.weight_decay, mask_ratio=args.mask_ratio,
         drop_modality=args.drop_modality, w_mask=args.w_mask, w_nce=args.w_nce,
         w_sup=args.w_sup, fusion=args.fusion, device=args.device,
+        precision=args.precision,
     )  # fmt: skip
     out = run(
         args.encoder, tuple(args.arms), args.run_id, args.folds, args.seeds, cfg,
         tuple(args.datasets), photos=not args.no_photos, out_root=args.out,
+        per_fold=shared_choices(args.per_fold) if args.per_fold else None,
+        encoder_choices={int(k): v for k, v in json.loads(
+            args.gate1.read_text(encoding="utf-8"))["per_fold_winner"].items()}
+        if args.gate1 else None,
     )  # fmt: skip
     print(f"[pretrain] done -> {out}")
 

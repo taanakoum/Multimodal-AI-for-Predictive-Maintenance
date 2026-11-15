@@ -322,6 +322,11 @@ def baseline_table(
                 lambda v: int(np.bincount(v).argmax()),
             )  # fmt: skip
     if inputs.y_reg is not None:
+        table["target_kind"] = (
+            "normalized_rul"
+            if inputs.regression_target == "rul"
+            else inputs.regression_target or "regression"
+        )
         mean = float(np.nanmean(inputs.y_reg[train_rows]))
         y = inputs.y_reg[index]
         table["y_reg"] = y
@@ -515,7 +520,16 @@ def run(
                 fold_cfg,
                 init=fold_cfg.init.replace("{fold}", str(fold)).replace("{seed}", str(seed)),
             )
-            fitted = fit(inputs, train_rows, val_rows, seed_cfg, seed, log=log, init_fold=fold)
+            fitted = fit(
+                inputs,
+                train_rows,
+                val_rows,
+                seed_cfg,
+                seed,
+                log=log,
+                init_fold=fold,
+                checkpoint=out / f"fold{fold}-seed{seed}.last.pt",
+            )
             val_pred = predict(fitted.model, inputs, val_rows, fold_cfg)
             y_mean, y_std = fitted.y_mean, fitted.y_std
             temperature, interval = _calibrate(inputs, val_rows, val_pred, y_mean, y_std)
@@ -724,7 +738,12 @@ def pooled_summary(out: Path, n: int | None = None) -> pd.DataFrame:
             if name != "model"
         ]
         y = tables[0]["y_reg"].to_numpy(dtype=float)
-        if bool(np.any(y < 1 - 1e-6)) and float(np.nanmax(y)) <= 1.0:  # normalized RUL
+        normalized = (
+            bool(np.all(tables[0]["target_kind"].to_numpy() == "normalized_rul"))
+            if "target_kind" in tables[0]
+            else bool(np.any(y < 1 - 1e-6)) and float(np.nanmax(y)) <= 1.0
+        )
+        if normalized:
             quantities += [
                 ("RMSE after FPT, model", rmse_of("pred_reg", after_fpt=True)),
                 ("RMSE after FPT, training mean", rmse_of("train_mean", after_fpt=True)),
@@ -941,6 +960,10 @@ def main(argv: list[str] | None = None) -> None:
         "each fold's own choices",
     )
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--precision", choices=("auto", "fp32", "bf16"), default="auto")
+    parser.add_argument("--cache-device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--predict-batch-size", type=int, default=1024)
+    parser.add_argument("--diagnostic-every", type=int, default=5)
     parser.add_argument("--out", type=Path, help="results folder (default: runs/planb)")
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
     args = parser.parse_args(argv)
@@ -965,6 +988,10 @@ def main(argv: list[str] | None = None) -> None:
         schedule=args.schedule,
         init=args.init,
         device=args.device,
+        precision=args.precision,
+        cache_device=args.cache_device,
+        predict_batch_size=args.predict_batch_size,
+        diagnostic_every=args.diagnostic_every,
     )
     started = time.perf_counter()
     out = run(

@@ -35,7 +35,7 @@ from pdmfm import arms, protocols
 from pdmfm import texts as text_specs
 from pdmfm.paths import data_root, interim_dir
 from pdmfm.utils import save_npy_atomic, stable_hash, write_json_atomic
-from pdmfm.windows import SPECS, WindowStore
+from pdmfm.windows import SPECS, WindowStore, source_fingerprint
 
 FEATURES_VERSION = 1
 
@@ -78,6 +78,7 @@ class FeatureStore:
             "encoder": encoder_signature,
             "arm": arm,
             "features_version": FEATURES_VERSION,
+            "precision": encoder_signature.get("precision", "fp32"),
         }
 
     def folder(self, store: WindowStore, encoder_signature: dict, arm: str) -> Path:
@@ -105,7 +106,8 @@ class FeatureStore:
             )
         encoder_signature = encoder.signature()  # once: it may look up the checkpoint revision
         signature = self.signature(store, encoder_signature, arm)
-        folder = self.folder(store, encoder_signature, arm)
+        signature["precision"] = getattr(encoder, "precision", "fp32")
+        folder = self.root / store.dataset / f"{arm}-{encoder.name}-{_hash(signature)}"
         n = len(store)
         shape = (n, len(arms.arm_channels(store, arm)), arms.n_tokens(store, arm), encoder.dim)
         meta_path = folder / "meta.json"
@@ -247,10 +249,14 @@ def image_paths(dataset: str) -> dict[str, list[str]]:
     raise ValueError(f"{dataset} has no photos")
 
 
-def extract_images(dataset: str, encoder, root: Path | None = None, log=print) -> list[Path]:
+def extract_images(
+    dataset: str, encoder, root: Path | None = None, log=print, chunk: int = 256
+) -> list[Path]:
     """Photo tokens per kind: ``images/<dataset>-<kind>-<key>/{paths.csv, features.npy}``."""
     out_root = (Path(root) if root else interim_dir("features")) / "images"
     written = []
+    if chunk < 1:
+        raise ValueError("image extraction chunk must be positive")
     for kind, paths in image_paths(dataset).items():
         if not paths:
             continue
@@ -259,23 +265,68 @@ def extract_images(dataset: str, encoder, root: Path | None = None, log=print) -
             "kind": kind,
             "encoder": encoder.signature(kind),
             "paths": _hash(paths),
+            "source": source_fingerprint(dataset),
+            "precision": getattr(encoder, "precision", "fp32"),
         }
         folder = out_root / f"{dataset}-{kind}-{encoder.name}-{_hash(signature)}"
-        if (folder / "meta.json").is_file():
+        meta_path = folder / "meta.json"
+        if meta_path.is_file() and json.loads(meta_path.read_text(encoding="utf-8")).get(
+            "complete"
+        ):
             log(f"[images] {dataset} {kind}: cached in {folder.name}")
             written.append(folder)
             continue
         start = time.perf_counter()
-        tokens = encoder.encode_paths([data_root() / p for p in paths], kind)
         folder.mkdir(parents=True, exist_ok=True)
         pd.DataFrame({"path": paths}).to_csv(folder / "paths.csv", index=False)
-        save_npy_atomic(folder / "features.npy", tokens.astype(np.float16))
-        write_json_atomic(
-            folder / "meta.json",
-            {"signature": signature, "shape": list(tokens.shape), "complete": True},
+        done = (
+            np.load(folder / "done.npy")
+            if (folder / "done.npy").exists()
+            else np.zeros(len(paths), bool)
         )
+        bank = (
+            np.load(folder / "features.npy", mmap_mode="r+")
+            if (folder / "features.npy").exists()
+            else None
+        )
+        todo = np.flatnonzero(~done)
+        for begin in range(0, len(todo), chunk):
+            index = todo[begin : begin + chunk]
+            tokens = encoder.encode_paths([data_root() / paths[i] for i in index], kind)
+            if bank is None:
+                bank = np.lib.format.open_memmap(
+                    folder / "features.npy",
+                    mode="w+",
+                    dtype=np.float16,
+                    shape=(len(paths),) + tokens.shape[1:],
+                )
+            bank[index] = tokens.astype(np.float16)
+            bank.flush()
+            done[index] = True
+            save_npy_atomic(folder / "done.npy", done)
+            write_json_atomic(
+                meta_path,
+                {
+                    "signature": signature,
+                    "shape": list(bank.shape),
+                    "n_done": int(done.sum()),
+                    "complete": bool(done.all()),
+                },
+            )
+        shape = None if bank is None else bank.shape
+        if bank is not None:
+            write_json_atomic(
+                meta_path,
+                {
+                    "signature": signature,
+                    "shape": list(bank.shape),
+                    "n_done": int(done.sum()),
+                    "complete": bool(done.all()),
+                },
+            )
+        del bank
         log(
-            f"[images] {dataset} {kind}: {len(paths)} photos -> {tokens.shape} "
+            f"[images] {dataset} {kind}: {len(paths)} photos -> {shape} "
             f"in {time.perf_counter() - start:.0f} s"
         )
         written.append(folder)
@@ -391,6 +442,7 @@ def _cmd_extract(args: argparse.Namespace) -> None:
     _claim(args.device, args.force)
     kwargs = {"batch_size": args.batch_size} if args.batch_size else {}
     encoder = get_encoder(args.encoder, device=args.device, checkpoint=args.checkpoint, **kwargs)
+    encoder.precision = args.precision
     feature_store = FeatureStore()
     for dataset in args.dataset:
         try:
@@ -411,6 +463,7 @@ def _cmd_images(args: argparse.Namespace) -> None:
 
     _claim(args.device, args.force)
     encoder = DinoV2Encoder(device=args.device)
+    encoder.precision = args.precision
     for dataset in args.dataset:
         extract_images(dataset, encoder)
         if args.views:
@@ -441,6 +494,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--checkpoint", help="patchtst only: the model folder written by pdmfm.patchtst")
     p.add_argument("--subsample", type=float, help="unit-stratified fraction of windows, e.g. 0.1")
     p.add_argument("--device", default="cpu", help="cpu or cuda")
+    p.add_argument("--precision", choices=("auto", "fp32", "bf16"), default="fp32")
     p.add_argument(
         "--batch-size", type=int, default=0, help="encoder batch size (default per encoder)"
     )
@@ -451,6 +505,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--dataset", nargs="+", default=["nonastreda", "najafi_thermal"])
     p.add_argument("--views", type=int, default=0, help="augmented copies per photo (training)")
     p.add_argument("--device", default="cpu")
+    p.add_argument("--precision", choices=("auto", "fp32", "bf16"), default="fp32")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=_cmd_images)
     p = sub.add_parser("texts", help="Qwen3 context embeddings and class prototypes")

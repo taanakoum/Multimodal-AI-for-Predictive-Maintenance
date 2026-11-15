@@ -24,11 +24,17 @@ import math
 
 import torch
 
+
+def _stable(value: torch.Tensor) -> torch.Tensor:
+    return value.float() if value.dtype in (torch.float16, torch.bfloat16) else value
+
+
 # ----------------------------------------------------------------------------- classes
 
 
 def opinion(evidence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """(belief (..., K), uncertainty (...)) of evidence (..., K)."""
+    evidence = _stable(evidence)
     k = evidence.shape[-1]
     strength = evidence.sum(-1, keepdim=True) + k
     return evidence / strength, (k / strength).squeeze(-1)
@@ -64,6 +70,7 @@ def ds_combine_all(evidence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
 
 def kl_to_uniform(alpha: torch.Tensor) -> torch.Tensor:
     """KL(Dir(alpha) || Dir(1)) per row."""
+    alpha = _stable(alpha)
     k = alpha.shape[-1]
     strength = alpha.sum(-1)
     return (
@@ -77,7 +84,7 @@ def kl_to_uniform(alpha: torch.Tensor) -> torch.Tensor:
 def tmc_loss(evidence: torch.Tensor, target: torch.Tensor, annealing: float) -> torch.Tensor:
     """Per-row TMC loss: expected cross-entropy under Dir(e + 1) plus ``annealing`` times the
     KL of the wrong-class evidence to Dir(1). ``target`` holds class indices."""
-    alpha = evidence + 1.0
+    alpha = _stable(evidence) + 1.0
     one_hot = torch.nn.functional.one_hot(target, alpha.shape[-1]).to(alpha.dtype)
     strength = alpha.sum(-1, keepdim=True)
     expected_ce = (one_hot * (torch.digamma(strength) - torch.digamma(alpha))).sum(-1)
@@ -96,7 +103,7 @@ def expected_probability(evidence: torch.Tensor) -> torch.Tensor:
 
 def nig_parameters(raw: torch.Tensor, min_evidence: float = 1e-4) -> torch.Tensor:
     """(..., 4) unconstrained outputs -> (gamma, nu > 0, alpha > 1, beta > 0)."""
-    gamma, nu, alpha, beta = raw.unbind(-1)
+    gamma, nu, alpha, beta = _stable(raw).unbind(-1)
     softplus = torch.nn.functional.softplus
     return torch.stack(
         [
@@ -111,7 +118,8 @@ def nig_parameters(raw: torch.Tensor, min_evidence: float = 1e-4) -> torch.Tenso
 
 def nig_nll(params: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     """Negative log-likelihood of y under the NIG's Student-t predictive (Amini et al., eq. 8)."""
-    gamma, nu, alpha, beta = params.unbind(-1)
+    gamma, nu, alpha, beta = _stable(params).unbind(-1)
+    y = _stable(y)
     omega = 2.0 * beta * (1.0 + nu)
     return (
         0.5 * torch.log(math.pi / nu)

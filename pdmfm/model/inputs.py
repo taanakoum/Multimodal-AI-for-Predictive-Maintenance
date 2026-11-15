@@ -60,6 +60,7 @@ from pdmfm import preprocess as pp
 from pdmfm import texts as text_specs
 from pdmfm.features import FeatureStore
 from pdmfm.paths import interim_dir
+from pdmfm.utils import feature_identity
 from pdmfm.windows import WindowStore
 
 ROLES = ("T", "F", "E", "S", "level", "tool", "chip", "workpiece", "thermal", "slow", "insert")
@@ -346,6 +347,7 @@ def _image_cache(root: Path, dataset: str, kind: str) -> tuple[list[str], np.nda
         (root / "images").glob(f"{dataset}-{kind}-dinov2-*/meta.json"),
         key=lambda p: p.stat().st_mtime,
     )
+    folders = [p for p in folders if json.loads(p.read_text(encoding="utf-8")).get("complete")]
     if not folders:
         raise FileNotFoundError(
             f"no DINOv2 {kind} photo cache for {dataset} (python -m pdmfm.features images)"
@@ -474,7 +476,8 @@ def assemble(
     if photos and store.spec.image_kinds:
         modalities["photo"] = _photo_modality(store, root)
     for modality in modalities.values():
-        modality.present &= done
+        if modality.name != "photo" and modality.name != "slow":
+            modality.present &= done
         if modality.positions is not None and modality.positions.max() >= MAX_POSITIONS:
             raise ValueError(f"{modality.name}: more than {MAX_POSITIONS} tokens per channel")
     manifest = store.manifest
@@ -494,6 +497,8 @@ def assemble(
         inputs.regression_target = target
         inputs.y_reg = manifest[target].to_numpy(dtype=float)
     inputs.description = {
+        "input_policy": "independent-modality-masks-v2",
+        "feature_identity": feature_identity(dataset, root, encoder, arm_list),
         "dataset": dataset,
         "encoder": encoder,
         "arms": list(arm_list),
@@ -515,6 +520,11 @@ def assemble(
         "classes": inputs.classes,
         "regression_target": inputs.regression_target,
         "baseline_units": None if train_units is None else sorted(map(str, train_units)),
+        "feature_signatures": [
+            FeatureStore(root).find(store, encoder, arm).meta["signature"]
+            for arm in arm_list
+            if arm not in arms.unavailable(store)
+        ],
     }
     json.dumps(inputs.description)  # must stay JSON-serializable: it goes into every result
     return inputs

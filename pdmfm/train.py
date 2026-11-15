@@ -15,24 +15,26 @@
   (PROJECT_LOG.md, week 5): modality dropout on the combined losses (``modality_dropout``),
   photos of the 2nd and 3rd previous passes (``photo_lags``) and augmented photo copies
   (``photo_views``) sampled per row in training, and a free linear class head (``head``).
-* Every epoch also scores a fixed sample of training rows (``train_score`` in the history),
-  so a run shows whether the model fits its training units or not.
+* A fixed training sample is scored at ``diagnostic_every`` epochs (default 5), plus the
+  final epoch; validation still runs every epoch for checkpoint selection.
 """
 
 from __future__ import annotations
 
-import copy
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from pdmfm import losses
 from pdmfm import metrics as M
+from pdmfm.compute import InputBank, autocast
 from pdmfm.model.fusion import build_model
 from pdmfm.model.inputs import TaskInputs
 from pdmfm.model.late import LateEvidential
+from pdmfm.utils import stable_hash
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,10 @@ class TrainConfig:
     schedule: str = "constant"  # or "cosine" (the fusion search)
     init: str = ""  # a pretrained backbone (pdmfm.pretrain); "{fold}", "{seed}" filled by planb
     device: str = "cpu"
+    precision: str = "auto"
+    cache_device: str = "auto"
+    predict_batch_size: int = 1024
+    diagnostic_every: int = 5
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -115,13 +121,15 @@ def batch(
 def _drop_modalities(parts: dict, p: float, rng: np.random.Generator) -> None:
     """Mark each present modality absent with probability ``p``, never all of a row's."""
     names = list(parts)
-    present = np.stack([parts[n]["present"].cpu().numpy() for n in names], 1)
-    keep = present & (rng.random(present.shape) >= p)
-    for i in np.flatnonzero(present.any(1) & ~keep.any(1)):
-        keep[i, rng.choice(np.flatnonzero(present[i]))] = True
+    present = torch.stack([parts[n]["present"] for n in names], 1)
+    random = torch.as_tensor(rng.random(present.shape), device=present.device)
+    keep = present & (random >= p)
+    lost = present.any(1) & ~keep.any(1)
+    choice = random.masked_fill(~present, -1).argmax(1)
+    fallback = torch.nn.functional.one_hot(choice, len(names)).bool()
+    keep = torch.where(lost[:, None], fallback, keep)
     for j, name in enumerate(names):
-        device = parts[name]["present"].device
-        parts[name]["present"] = torch.from_numpy(keep[:, j]).to(device)
+        parts[name]["present"] = keep[:, j]
 
 
 @dataclass
@@ -196,7 +204,7 @@ def _losses(
     return total
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def predict(
     model: LateEvidential,
     inputs: TaskInputs,
@@ -204,6 +212,7 @@ def predict(
     cfg: TrainConfig,
     drop: tuple[str, ...] = (),
     photo_lag: int = 1,
+    bank: InputBank | None = None,
 ) -> dict:
     """Numpy outputs for ``rows``: evidence, combined, conflict, nig, fused_nig, present, and
     a fusion candidate's own fused_evidence and fused_own_nig. ``photo_lag`` > 1 gives the
@@ -211,14 +220,24 @@ def predict(
     model.eval()
     device = torch.device(cfg.device)
     collected: dict[str, list] = {}
-    for start in range(0, len(rows), 1024):
-        out = model(batch(inputs, rows[start : start + 1024], device, drop, photo_lag))
+    for start in range(0, len(rows), cfg.predict_batch_size):
+        selected = rows[start : start + cfg.predict_batch_size]
+        parts = (
+            bank.batch(selected, drop)
+            if bank is not None and photo_lag == 1
+            else batch(inputs, selected, device, drop, photo_lag)
+        )
+        with autocast(device, cfg.precision):
+            out = model(parts)
         for key in (
             "evidence", "combined", "conflict", "nig", "fused_nig", "present",
             "fused_evidence", "fused_own_nig",
         ):  # fmt: skip
             if key in out:
-                collected.setdefault(key, []).append(out[key].cpu().numpy())
+                value = out[key]
+                if value.is_floating_point():
+                    value = value.float()
+                collected.setdefault(key, []).append(value.cpu().numpy())
     return {k: np.concatenate(v) for k, v in collected.items()}
 
 
@@ -252,7 +271,9 @@ def selection_score(
         labelled = np.isfinite(y)
         if labelled.any():
             mean = pred["fused_nig"][labelled, 0] * y_std + y_mean
-            rmse = float(np.sqrt(np.mean((mean - y[labelled]) ** 2)))
+            _, means = bag_mean(mean, bags[labelled])
+            _, targets = bag_mean(y[labelled], bags[labelled])
+            rmse = float(np.sqrt(np.mean((means - targets) ** 2)))
             parts.append(1.0 - rmse / y_std)
     return float(np.mean(parts)) if parts else float("nan")
 
@@ -276,12 +297,15 @@ def fit(
     seed: int,
     log=print,
     init_fold: int | None = None,
+    checkpoint: Path | None = None,
 ) -> Fitted:
     """``cfg.init``: start from a pretrained backbone (:func:`pdmfm.pretrain.initialize`),
     which must be ``init_fold``'s own for a source dataset."""
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     device = torch.device(cfg.device)
+    if cfg.predict_batch_size < 1 or cfg.diagnostic_every < 1:
+        raise ValueError("prediction batch size and diagnostic frequency must be positive")
     if cfg.fusion != "late" and cfg.modality_dropout > 0:
         # Loss-level dropout recombines the experts' opinions only; a fusion stage has
         # already seen every modality, so fusion candidates drop inputs (input_dropout).
@@ -293,7 +317,15 @@ def fit(
         from pdmfm.pretrain import initialize
 
         encoder = inputs.description.get("encoder")
-        initialize(model, cfg.init, inputs.dataset, init_fold, encoder=encoder, log=log)
+        initialize(
+            model,
+            cfg.init,
+            inputs.dataset,
+            init_fold,
+            encoder=encoder,
+            log=log,
+            train_units=set(inputs.manifest.iloc[train_rows]["unit"].astype(str)),
+        )
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = make_scheduler(optimizer, cfg, len(train_rows))
@@ -307,38 +339,96 @@ def fit(
     # A fixed sample of training rows, scored every epoch like the validation rows.
     probe = np.sort(rng.choice(train_rows, min(512, len(train_rows)), replace=False))
     augment = (cfg, rng) if (cfg.photo_lags > 1 or cfg.photo_views or cfg.input_dropout) else None
+    bank = InputBank(inputs, device, cfg.cache_device) if augment is None else None
+    start_epoch = 0
+    identity = stable_hash(
+        {
+            "config": cfg.as_dict(),
+            "inputs": inputs.description,
+            "seed": seed,
+            "train": train_rows.tolist(),
+            "val": val_rows.tolist(),
+        }
+    )
+    if checkpoint is not None and checkpoint.exists():
+        state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        if state["identity"] != identity:
+            raise ValueError("checkpoint has other settings or data")
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        if scheduler is not None:
+            scheduler.load_state_dict(state["scheduler"])
+        rng.bit_generator.state = state["numpy_rng"]
+        torch.set_rng_state(state["torch_rng"])
+        if device.type == "cuda" and state["cuda_rng"] is not None:
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+        start_epoch, best, best_state = state["epoch"], state["best"], state["best_state"]
+        best_epoch, history = state["best_epoch"], state["history"]
     started = time.perf_counter()
-    for epoch in range(cfg.epochs):
+    for epoch in range(start_epoch, cfg.epochs):
         model.train()
         annealing = min(1.0, epoch / cfg.kl_epochs) if cfg.kl_epochs else 1.0
         order = rng.permutation(train_rows)
-        running = 0.0
+        running = torch.zeros((), device=device)
         for start in range(0, len(order), cfg.batch_size):
             rows = order[start : start + cfg.batch_size]
-            out = model(batch(inputs, rows, device, augment=augment))
+            parts = (
+                bank.batch(rows)
+                if bank is not None
+                else batch(inputs, rows, device, augment=augment)
+            )
+            with autocast(device, cfg.precision):
+                out = model(parts)
             loss = _losses(out, inputs, rows, annealing, cfg, y_mean, y_std, device)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-            running += float(loss.detach()) * len(rows)
+            running += loss.detach() * len(rows)
         score = selection_score(
-            inputs, val_rows, predict(model, inputs, val_rows, cfg), y_mean, y_std
+            inputs, val_rows, predict(model, inputs, val_rows, cfg, bank=bank), y_mean, y_std
         )
-        fit_score = selection_score(
-            inputs, probe, predict(model, inputs, probe, cfg), y_mean, y_std
+        fit_score = (
+            selection_score(
+                inputs, probe, predict(model, inputs, probe, cfg, bank=bank), y_mean, y_std
+            )
+            if epoch % cfg.diagnostic_every == 0 or epoch == cfg.epochs - 1
+            else float("nan")
         )
         history.append(
             {
                 "epoch": epoch + 1,
-                "loss": running / len(order),
+                "loss": float(running) / len(order),
                 "train_score": fit_score,
                 "val_score": score,
             }
         )
         if score > best:
-            best, best_epoch, best_state = score, epoch + 1, copy.deepcopy(model.state_dict())
+            best, best_epoch = score, epoch + 1
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        if checkpoint is not None:
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            temporary = checkpoint.with_suffix(".tmp")
+            torch.save(
+                {
+                    "identity": identity,
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": None if scheduler is None else scheduler.state_dict(),
+                    "numpy_rng": rng.bit_generator.state,
+                    "torch_rng": torch.get_rng_state(),
+                    "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+                    "epoch": epoch + 1,
+                    "best": best,
+                    "best_state": best_state,
+                    "best_epoch": best_epoch,
+                    "history": history,
+                },
+                temporary,
+            )
+            temporary.replace(checkpoint)
+            log(f"[train] checkpoint epoch {epoch + 1}/{cfg.epochs}")
     if best_state is not None:
         model.load_state_dict(best_state)
     seconds = time.perf_counter() - started
