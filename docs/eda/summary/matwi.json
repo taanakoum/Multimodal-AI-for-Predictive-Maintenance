@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "protocol": "recorded-life-proxy-v1",
+  "endpoint": "last recorded operation; physical failure unverified",
+  "tools": 17,
+  "recordings": 1700,
+  "rul_labelled_recordings": 1700,
+  "flank_labelled_recordings": 1052,
+  "wear_types": {
+    "flank_wear": 1052,
+    "flank_wear+adhesion": 263,
+    "adhesion": 177,
+    "": 133,
+    "unknown_insert": 75
+  },
+  "duration_s": {
+    "min": 36.997079,
+    "median": 52.886472999999995,
+    "max": 125.964881
+  },
+  "operation_s_by_tool": {
+    "Set01": 4689.425877999999,
+    "Set02": 5429.811268000002,
+    "Set03": 6330.842316,
+    "Set04": 5276.669469999999,
+    "Set05": 4121.558643000001,
+    "Set06": 11343.319605,
+    "Set07": 5531.632999,
+    "Set08": 5231.770756999999,
+    "Set09": 5351.605749999999,
+    "Set10": 5167.161467000001,
+    "Set11": 5860.990535999999,
+    "Set12": 3689.952181000001,
+    "Set13": 2967.498479000001,
+    "Set14": 8406.167999999992,
+    "Set15": 2735.8500000000004,
+    "Set16": 10136.466000000002,
+    "Set17": 3679.548
+  },
+  "all_terminal_rul_zero": true,
+  "baseline_unit_mean_mae_s": {
+    "zero": 2765.5,
+    "training_mean": 1698.1,
+    "training_mean_life_minus_elapsed": 1569.7
+  },
+  "baseline_protocol": "fixed 5-fold unit-disjoint CPU feasibility; no neural performance claim"
+}

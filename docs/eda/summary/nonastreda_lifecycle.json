@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "logical_passes": 512,
+  "tools": 10,
+  "distinct_force_recordings": 378,
+  "endpoint_rule": "first dulled pass with two dulled among next three recorded labels",
+  "labelled_pass_ends": 376,
+  "gap_operation_s_by_tool": {
+    "T1": 0.0,
+    "T10": 0.0,
+    "T2": 384.924,
+    "T3": 0.0,
+    "T4": 1541.384,
+    "T5": 0.0,
+    "T6": 0.0,
+    "T7": 0.0,
+    "T8": 0.0,
+    "T9": 0.0
+  },
+  "endpoint_s_gap_aware": {
+    "T1": 2999.744,
+    "T10": 5367.376,
+    "T2": 4203.135,
+    "T3": 3463.403999999999,
+    "T4": 3657.234,
+    "T5": 1827.02,
+    "T6": 4471.795,
+    "T7": 4542.823,
+    "T8": 4473.52,
+    "T9": 3837.056
+  },
+  "endpoint_s_recorded_only": {
+    "T1": 2999.744,
+    "T10": 5367.376,
+    "T2": 3818.211,
+    "T3": 3463.403999999999,
+    "T4": 2115.85,
+    "T5": 1827.02,
+    "T6": 4471.795,
+    "T7": 4542.823,
+    "T8": 4473.52,
+    "T9": 3837.056
+  },
+  "legacy_summary": "nonastreda.json describes the deduplicated 378-pass wear protocol, not this lifecycle"
+}
