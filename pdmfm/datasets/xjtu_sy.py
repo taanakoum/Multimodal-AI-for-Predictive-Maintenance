@@ -72,7 +72,9 @@ class XJTUSY:
     def index(self) -> list[RecordingInfo]:
         infos = []
         for bearing, (condition, paths) in self.bearings().items():
-            for minute, path in enumerate(paths, 1):
+            lifetime = max((int(p.stem) for p in paths), default=0)
+            for path in paths:
+                minute = int(path.stem)
                 infos.append(
                     RecordingInfo(
                         dataset=self.name,
@@ -83,7 +85,7 @@ class XJTUSY:
                         meta={
                             "path": str(path),
                             "minute": minute,
-                            "lifetime_min": len(paths),
+                            "lifetime_min": lifetime,
                             "failure": FAILURE.get(bearing),
                         },
                     )
@@ -92,6 +94,8 @@ class XJTUSY:
 
     def load(self, info: RecordingInfo) -> Recording:
         values = read_snapshot(Path(info.meta["path"]))
+        if values.ndim != 2 or values.shape[1] != 2 or not np.isfinite(values).all():
+            raise ValueError(f"{info.recording_id}: expected two finite vibration channels")
         channels = {
             "vib_h": ChannelData(
                 "vib_h", "vibration", "x", "housing", RATE_HZ, as_float32(values[:, 0]), "g"

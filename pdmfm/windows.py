@@ -128,6 +128,11 @@ def source_fingerprint(dataset: str) -> str | None:
 
 def window_signature(spec: DatasetSpec, limit: int | None = None) -> dict:
     return {
+        **(
+            {"reader_policy": "flank-only-verified-inserts-clock-v2"}
+            if spec.name == "matwi"
+            else {}
+        ),
         "dataset": spec.name,
         "spec": asdict(spec),
         "windows_version": WINDOWS_VERSION,
@@ -293,6 +298,15 @@ def build(
     reader = reader or get_reader(dataset)
     dataset_texts = texts.load(dataset)
     infos = reader.index()
+    if dataset == "xjtu_sy":
+        by_unit = defaultdict(list)
+        for info in infos:
+            by_unit[info.unit].append(info.meta["minute"])
+        for unit, minutes in by_unit.items():
+            if minutes != list(range(1, len(minutes) + 1)):
+                raise ValueError(
+                    f"{unit}: missing snapshots; ordinal RUL labels need contiguous minutes"
+                )
     if limit is not None:
         infos = infos[:limit]
     name = dataset if limit is None else f"{dataset}-limit{limit}"  # never replaces the full store
@@ -379,7 +393,10 @@ def build(
                         **_scalar_meta(info.meta),
                     }
                     if spec.image_kinds:
-                        attached = as_of_join(photos[info.unit], t_start, spec.image_kinds)
+                        cutoff = (
+                            recording.t_offset if dataset in ("nonastreda", "matwi") else t_start
+                        )
+                        attached = as_of_join(photos[info.unit], cutoff, spec.image_kinds)
                         for item in attached:
                             row[f"image_{item.kind}"] = _relative(item.path)
                             row[f"age_{item.kind}"] = t_start - item.captured_at
@@ -443,7 +460,12 @@ def build(
         shutil.rmtree(partial, ignore_errors=True)
         raise
     old = folder.with_name(f".{folder.name}.old")
-    shutil.rmtree(old, ignore_errors=True)
+    if folder.exists() and (folder / "meta.json").exists():
+        previous = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+        if previous.get("key") != meta["key"]:
+            old = folder.with_name(f"{folder.name}-archive-{previous.get('key', 'legacy')}")
+    if old.exists():
+        raise FileExistsError(f"archive already exists: {old}; choose another output folder")
     if folder.exists():
         try:
             folder.rename(old)
@@ -454,7 +476,8 @@ def build(
                 "close it and build again"
             ) from error
     partial.rename(folder)
-    shutil.rmtree(old, ignore_errors=True)
+    if old.name.startswith("."):
+        shutil.rmtree(old, ignore_errors=True)
     log(f"[windows] {dataset}: {len(rows)} windows x {len(spec.channels)} channels -> {folder}")
     return WindowStore(folder)
 

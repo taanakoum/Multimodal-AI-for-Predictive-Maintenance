@@ -189,7 +189,7 @@ SOURCES: dict[str, DatasetSource] = {
         licence="CC BY-NC 4.0",
         citation="C. Lessmeier et al., Condition monitoring of bearing damage in electromechanical "
         "drive systems by using motor current signals of electric motors, PHME 2016.",
-        homepage="https://mb.uni-paderborn.de/kat/datacenter",
+        homepage="https://mb.uni-paderborn.de/en/kat/research/bearing-datacenter",
         files=tuple(
             RemoteFile(
                 url=f"https://groups.uni-paderborn.de/kat/BearingDataCenter/{code}.rar",

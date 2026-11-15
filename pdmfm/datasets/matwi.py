@@ -1,29 +1,10 @@
-"""MATWI: multimodal automatic tool wear inspection (De Pauw, Jacobs & Goedemé, KU Leuven,
-2023; CC BY-SA 4.0; doi:10.48804/GK6LHH).
+"""Native MATWI reader (De Pauw, Jacobs & Goedeme, doi:10.48804/GK6LHH).
 
-17 single-insert carbide milling tools (15 mm; Set 17 has two inserts), run to failure in
-C45 (Sets 1-11) and 304 stainless steel (Sets 12-17). Each measurement is a cut of about
-55.6 s, recorded at 1/0.000611 s ≈ 1,636.7 Hz with five channels (accelerometer, microphone,
-Fx, Fy, Fz), followed about 1.5 min later by a photo of the insert, on which an expert
-measured the flank wear in µm. Checked on the downloaded files (PROJECT_LOG.md, week 5).
-
-What this reader does:
-
-* **One recording per cut**, labelled by timestamps, not by the rows of ``labels.csv``: the
-  wear on the first photo taken after the cut starts and before the next cut (the wear at
-  the end of the cut). The rows are shifted by one cut in places (the publisher's
-  synchronisation errors; Set 9's median row gap is 175 s instead of about 85 s).
-  Cuts without such a photo are unlabelled. For Set 17 (two inserts, photographed in turn)
-  the label is the worse insert: the maximum over the latest photo of each insert.
-* **Classes**: the flank-wear thresholds of Nonastreda (sharp < 71 µm ≤ used < 110 µm ≤
-  dulled), so both milling sets share one text-anchored label space.
-* **Rate**: every channel is resampled to 1 kHz, the rate of Nonastreda's force, so milling
-  spectra share one frequency axis (the tooth-passing lines, 42-106 Hz, are far below 500 Hz).
-* **Photos**: each photo is cropped to the insert with the publisher's per-set crop box
-  (``sets.csv``; 600 x 400 px) and saved once to ``extracted/matwi/crops/``. A cut's photo is
-  stamped at its capture time, after the cut, so the as-of join attaches it to the *next*
-  cut's windows and never to its own (the leak OmniFuser's finding F1 describes).
-* **Clock**: seconds since the tool's first event; meta ``t_start`` orders the cuts.
+Cut labels are matched by photo timestamps. Only pure flank-wear annotations enter the
+flank target; adhesion and mixed wear retain their annotated value in metadata. Multiple
+inserts require explicit InsertID values, never an assumption based on photo adjacency.
+Signals are resampled to 1 kHz using the measured CSV acquisition duration. Lifecycle
+conversion uses recorded operation separately from the photo/wall clock.
 """
 
 from __future__ import annotations
@@ -91,6 +72,29 @@ def _seconds(stamps) -> np.ndarray:
     return pd.to_datetime(stamps).astype("int64").to_numpy() / 1e9
 
 
+def sensor_clock(path: Path) -> tuple[pd.Timestamp, float]:
+    """Actual first sample and inclusive recording duration, without reading signals.
+
+    The sixth CSV column is the acquisition clock. Filenames can precede acquisition by
+    several seconds, and measured rates differ from the nominal 0.611 ms interval.
+    """
+    with Path(path).open("rb") as f:
+        first, second = f.readline(), f.readline()
+        if not first or not second:
+            raise ValueError(f"{path}: need at least two acquisition timestamps")
+        f.seek(max(0, f.seek(0, 2) - 2048))
+        last = f.read().splitlines()[-1]
+    stamps = [pd.Timestamp(v.decode().strip().split(",")[-1]) for v in (first, second, last)]
+    dt = (stamps[1] - stamps[0]).total_seconds()
+    duration = (stamps[2] - stamps[0]).total_seconds() + dt
+    if dt <= 0 or duration <= 0 or not np.isfinite(duration):
+        raise ValueError(f"{path}: invalid acquisition timestamps")
+    first_stamp = stamps[0]
+    if not isinstance(first_stamp, pd.Timestamp):
+        raise ValueError(f"{path}: missing acquisition timestamp")
+    return first_stamp, duration
+
+
 class MATWI:
     name = "matwi"
 
@@ -152,25 +156,37 @@ class MATWI:
     def index(self) -> list[RecordingInfo]:
         sets = read_sets(self.root / "sets.csv")
         table = self.table()
-        cuts = table.loc[table["SensorFile"].notna()].sort_values(["Set", "sensor_s"])
+        cuts = table.loc[table["SensorFile"].notna()].copy()
+        for index, row in cuts.iterrows():
+            path = self._file(row["SensorFile"])
+            if path is None:
+                raise ValueError("missing MATWI sensor path")
+            actual, duration = sensor_clock(path)
+            offset = (actual - pd.Timestamp(row["SensorDateTime"])).total_seconds()
+            cuts.loc[index, "sensor_s"] += offset
+            cuts.loc[index, "duration_s"] = duration
+        cuts = cuts.sort_values(["Set", "sensor_s"])
         labels = self.cut_wear(cuts, sets)
         infos = []
         for index, row in zip(cuts.index, cuts.to_dict("records"), strict=True):
             number = int(row["Set"])
             wear, wear_type = labels[index]
             condition = {k: v for k, v in sets[number].items() if k != "crop"}
+            flank = wear if wear_type == "flank_wear" else np.nan
             infos.append(
                 RecordingInfo(
                     dataset=self.name,
                     recording_id=Path(str(row["SensorName"])).stem,
                     unit=f"Set{number:02d}",
-                    label=wear_class(wear),
+                    label=wear_class(flank),
                     condition=condition,
                     meta={
                         "path": str(self._file(row["SensorFile"])),
                         "t_start": float(row["sensor_s"]),
-                        "wear_um": wear,
+                        "wear_um": flank,
+                        "annotated_wear_um": wear,
                         "wear_type": wear_type,
+                        "duration_s": float(row["duration_s"]),
                         "set": number,
                     },
                 )
@@ -197,9 +213,26 @@ class MATWI:
                 if not len(own):
                     out[index] = (np.nan, "")
                     continue
-                last = own[0]  # the first photo after the cut shows its end state
-                recent = wears[max(0, last - inserts + 1) : last + 1]  # one per insert
-                out[index] = (float(np.max(recent)), str(kinds[last]))
+                if inserts > 1:
+                    # Consecutive photos do not establish insert identity. Only an
+                    # explicit publisher identity allows a worst-insert target.
+                    if "InsertID" not in taken:
+                        out[index] = (np.nan, "unknown_insert")
+                        continue
+                    identities = taken["InsertID"].to_numpy()
+                    latest = []
+                    for identity in pd.unique(identities[own]):
+                        if pd.isna(identity):
+                            continue
+                        pick = own[identities[own] == identity][-1]
+                        latest.append(int(pick))
+                    if len(latest) != inserts:
+                        out[index] = (np.nan, "incomplete_inserts")
+                        continue
+                    last = max(latest, key=lambda j: wears[j])
+                else:
+                    last = own[0]
+                out[index] = (float(wears[last]), str(kinds[last]))
         return out
 
     def photos(self, unit: str, after: float, before: float) -> tuple[ImageItem, ...]:
@@ -218,6 +251,8 @@ class MATWI:
 
     def load(self, info: RecordingInfo) -> Recording:
         values = pd.read_csv(info.meta["path"], header=None).iloc[:, :5].to_numpy(np.float64)
+        _, duration = sensor_clock(Path(info.meta["path"]))
+        rate = len(values) / duration
         channels = {
             name: ChannelData(
                 name,
@@ -225,7 +260,7 @@ class MATWI:
                 axis,
                 placement,
                 MODEL_RATE_HZ,
-                as_float32(pp.resample(values[:, i], NOMINAL_RATE_HZ, MODEL_RATE_HZ)),
+                as_float32(pp.resample(values[:, i], rate, MODEL_RATE_HZ)),
                 "N" if family == "force" else "",
             )
             for i, (name, family, axis, placement) in enumerate(CHANNELS)
