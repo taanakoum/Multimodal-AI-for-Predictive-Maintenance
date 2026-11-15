@@ -59,28 +59,46 @@ See [dataset evidence](DATASET_AUDIT.md) for unsupported tasks and unresolved ac
 - Preserve five unit-grouped source folds. CWRU/KAIST load splits measure condition shift,
   never independent-unit generalization. Scores aggregate at bag level; regression
   checkpoint selection must use the same aggregation as reported evaluation.
+- Audit all required source units and class/bag coverage before training. Paderborn has
+  three healthy source bearings for five folds: outer test folds 4/5 and validation fold 3
+  lack healthy examples. Report that limitation and pooled out-of-fold class metrics;
+  fold-wise balanced accuracy does not always represent all three classes. MATWI groups
+  mix both materials and do not establish unseen-material generalization.
 - Fit normalizers on training units and calibration on validation units. Report pooled
-  and equal-unit summaries; bootstrap units, average seeds, and correct paired tests.
+  and equal-unit summaries; bootstrap physical units and correct paired tests.
   Target kind is explicit in new result tables; normalized-RUL reporting cannot be
   inferred from small regression values. Legacy tables retain their old fallback.
-- Gate 1 chooses frozen encoders/arms per outer fold. Gate 2 defaults to a ten-epoch screen
+- Gate 1 chooses frozen encoders/arms per outer fold. A shared winner must have applicable
+  inputs on every scored source task; a favorable mean rank cannot compensate for a
+  missing milling arm. Gate 2 defaults to a ten-epoch screen
   of all fusion candidates on the first inner split of that outer fold. Retain its best
   two and both late references for full four-inner-split evaluation. `--screen-epochs 0`
   evaluates all candidates. The existing +0.01 gain / 60% paired-win rule is retained.
 - Pretraining accepts fold-specific Gate-1 and Gate-2 choices. Across source datasets, only
   unanimous overrides apply; conflicting fusion choices use late experts and other conflicts
-  retain the common defaults. An initialized model must
+  retain the common defaults. Merge tuning and Gate-2 decisions per dataset before seeking
+  agreement across sources; Gate 2 owns the fusion recipe it evaluated. Fine-tuning retains
+  the shared backbone's width, head and fusion architecture, explicitly recording any
+  override of a dataset-specific choice. An initialized model must
   carry training-unit provenance contained in the current training split. Outer-fold
   PatchTST caches are refused for nested searches; proper inner-split pretraining is
   additional future work, not silently transductive validation.
-- Final evaluations use three seeds; search fits use one. Reuse only identical complete
+- Production evaluations and search fits use one fixed seed (0). Five outer folds remain;
+  they are different test units, not repeated random seeds. Unit-bootstrap intervals measure
+  unit sampling uncertainty, not training-seed variability. Reuse only identical complete
   run identities. CUDA RNG, optimizer, scheduler, and sampling states are checkpointed.
-- Stage immutable feature inputs on GPU when they fit within half free memory; otherwise
+- Stage immutable feature inputs on GPU when they fit within half the worker's available
+  allocation; otherwise
   use pinned CPU staging. CPU uses FP32. Supported CUDA uses BF16 under `auto`, while
   evidential math remains FP32. Mantis' numpy transform remains FP32.
 - Run the supplied CUDA acceptance and cached-feature benchmark before full jobs. Keep a
   measured time ledger below 110 A100-hours; report device, precision, elapsed time, peak
   memory, fit count, and numerical agreement. CPU measurements do not establish GPU savings.
+- Ruche source jobs use isolated dataset/fold directories and one-GPU array elements,
+  with up to four elements active. Pilot one versus two cached-model workers per GPU;
+  divide CPU threads and bound each worker's CUDA allocator share. Use one worker for
+  large frozen encoders or if concurrent fits increase wall time/OOM. Preserve training
+  batch sizes unless an explicit recipe change is revalidated. See the current runbook.
 
 ## Task outputs and acceptance
 

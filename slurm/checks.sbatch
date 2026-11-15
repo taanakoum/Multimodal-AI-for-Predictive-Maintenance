@@ -1,5 +1,5 @@
 #!/bin/bash
-# Step 0 on a CPU node: tests, the window stores and the feature caches that are present.
+# Step 0 on a CPU node: fast CPU tests, the window stores and the feature caches that are present.
 # Submit from the repository folder:  sbatch slurm/checks.sbatch
 #SBATCH --job-name=step0-checks
 #SBATCH --output=runs/logs/%x-%j.out
@@ -16,14 +16,14 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
     exit 2
 fi
 cd "$SLURM_SUBMIT_DIR" || exit 2
-source slurm/env.sh
 set -eo pipefail
+source slurm/env.sh
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 echo "job $SLURM_JOB_ID on $(hostname), started $(date)"
 echo "commit: $(git log -1 --oneline 2>/dev/null || echo unknown)"
-echo "=== tests (real-data and checkpoint tests run where their data and weights exist)"
-python -m pytest -m "not network and not weights and not gpu" --run-data -q -rs tests
+echo "=== fast CPU tests (real data and checkpoints are separate explicit acceptance steps)"
+python -m pytest -q -rs tests
 echo "=== window stores"
 python -m pdmfm.windows info
 echo "=== feature caches"

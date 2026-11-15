@@ -83,3 +83,13 @@ See PLAN.md for unfinished research stages. In particular, this audit does not c
 held-out adaptation, LoRA, TimesFM, image localization, or GPU benchmark results. Paderborn
 and PHM 2010 real files remain absent locally. Current raw data, pretrained weights and
 experiment output files are excluded from Git; changed stores are archived, not deleted.
+
+## Ruche follow-up, 16 November 2026
+
+See [RUCHE_AUDIT.md](RUCHE_AUDIT.md) for the current single-seed schedule, full acquisition
+clock and CV preflight, shared-backbone selection corrections, real preprocessing evidence
+and validation. The current full fast run passed 544 tests with 23 Windows/platform skips;
+real-data selection passed 16 with six absent-data skips. Revised MATWI rebuilt all 1,700
+recordings into 11,081 windows. No CUDA performance result or unavailable physical dataset
+is certified by these local checks. [Commit commands](RUCHE_COMMIT_COMMANDS.md) are provided
+without creating commits automatically.

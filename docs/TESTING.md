@@ -48,6 +48,8 @@ BLAS configuration (e.g. `CUBLAS_WORKSPACE_CONFIG=:4096:8`) for exact-resume che
 | Calibration/statistics | Temperature/scale, Student-t intervals, unit bootstrap, Holm | Paired reports, explicit target kind, legacy compatibility |
 | Explanations | Tone occlusion, physics masks, deletion and randomization | Cached/online probe agreement; reader-dependent physics checks |
 | Downloads and cluster | Hash/size/resume, archive handling, SLURM argument/chain behavior | Live source checks opt-in; shell tests on Linux |
+| Ruche worker orchestration | Real CLI argument parsing, single-seed manifests, GPU/CPU shares | Real subprocess failure/retry isolation; isolated fold collection into pooled reports |
+| Preflight and CV coverage | All physical source units; four inner groups exclude outer test | Full store/cache numeric scans; missing/incomplete cache rejection; class coverage report |
 
 The missing adaptation/LoRA, forecasting, photo localization and final explanation-card
 stages are listed as future work in PLAN.md. Tests do not imply those stages are built.
@@ -68,10 +70,21 @@ Published validation counts and timing commands are recorded in AUDIT.md. Wall t
 comparisons must state coverage, optional dependencies, hardware and thread settings;
 there is no claimed GPU speedup until the cluster pilot passes.
 
-## Latest local result
+## Previous complete audit result
 
 The fast suite passed **521 tests**, with 19 Windows/platform skips. The separate slow
 suite passed all **8 quality checks**; real-data acceptance passed **19**, skipping four
 checks for absent Paderborn/PHM 2010 data. CUDA and live network acceptance were not run.
 Lint, formatting, workflow lint and type checking pass. See AUDIT.md for timing, artifact
 paths, and the distinction between fast coverage and external/hardware coverage.
+
+## Ruche follow-up
+
+The 16 November scheduling/preprocessing follow-up passed 544 fast tests (199 unit,
+342 integration, three end-to-end) with 23 platform skips. Real-data selection passed 16
+with six absent-data skips; the full revised MATWI build also passed. A final 57-test
+selection/worker/pretraining follow-up passed, including the added shared-eligibility
+regression. See
+[RUCHE_AUDIT.md](RUCHE_AUDIT.md) for final selection regressions, shell/type checks,
+measured timings and outstanding CUDA/physical-data acceptance. Production uses seed 0;
+slow multi-seed learning checks are a separate research-quality suite.

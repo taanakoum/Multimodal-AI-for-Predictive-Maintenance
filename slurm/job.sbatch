@@ -28,8 +28,8 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 cd "$SLURM_SUBMIT_DIR" || exit 2
-source slurm/env.sh
 set -eo pipefail
+source slurm/env.sh
 # Keep CPU thread pools inside the cores SLURM granted (Ruche gives 4 GB per core).
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
@@ -38,5 +38,6 @@ echo "job $SLURM_JOB_ID ($SLURM_JOB_NAME) on $(hostname), partition $SLURM_JOB_P
 echo "commit: $(git log -1 --oneline 2>/dev/null || echo unknown)"
 echo "command: $*"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
+source slurm/monitor.sh
 "$@"
 echo "finished $(date)"

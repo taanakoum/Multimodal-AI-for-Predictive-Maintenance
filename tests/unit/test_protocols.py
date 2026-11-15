@@ -50,6 +50,22 @@ def test_every_tool_is_tested_exactly_once(nonastreda):
     assert sorted(tested) == sorted(protocols.NONASTREDA_TOOLS)
 
 
+def test_cv_audit_rejects_partial_stores_and_counts_physical_units(nonastreda):
+    report = protocols.audit_folds("nonastreda", nonastreda)
+    assert report["source_units"] == 10
+    assert all(len(f["test"]) == 2 and len(f["train"]) == 7 for f in report["folds"])
+    with pytest.raises(ValueError, match="missing source units"):
+        protocols.audit_folds("nonastreda", nonastreda.loc[nonastreda.unit != "T10"])
+
+
+def test_paderborn_cv_reports_class_coverage_without_target_leakage(paderborn):
+    report = protocols.audit_folds("paderborn", paderborn)
+    source = set(sum(protocols.PADERBORN_SOURCE_FOLDS, ()))
+    for fold in report["folds"]:
+        assert set(fold["train"] + fold["val"] + fold["test"]) == source
+    assert "healthy" not in report["folds"][3]["test_class_bags"]
+
+
 def test_leave_one_tool_out_wraps_round(nonastreda):
     split = protocols.nonastreda_loto(nonastreda, 10)
     assert split.units(nonastreda, "test") == {"T10"} and split.units(nonastreda, "val") == {"T1"}

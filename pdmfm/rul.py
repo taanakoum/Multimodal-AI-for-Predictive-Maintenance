@@ -24,7 +24,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from pdmfm import losses, protocols
 from pdmfm import metrics as M
 from pdmfm import stats as S
-from pdmfm.compute import autocast
+from pdmfm.compute import autocast, configure_cuda
 from pdmfm.model.inputs import TaskInputs, assemble
 from pdmfm.model.layers import NIGHead
 from pdmfm.paths import REPO_ROOT
@@ -280,6 +280,9 @@ def fit(
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     device = torch.device(cfg.device)
+    configure_cuda(device)
+    if cfg.batch_size < 1 or cfg.predict_batch_size < 1:
+        raise ValueError("training and prediction batch sizes must be positive")
     y = snaps.table["y"].to_numpy(dtype=np.float32)
     y_mean, y_std = float(y[train].mean()), float(y[train].std()) or 1.0
     target = (y - y_mean) / y_std
@@ -538,7 +541,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--folds", nargs="+", type=int, default=list(range(1, protocols.N_FOLDS + 1))
     )
-    parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    parser.add_argument("--seeds", nargs="+", type=int, default=[0])
     defaults = RULConfig()
     parser.add_argument("--history", type=int, default=defaults.history)
     parser.add_argument(
@@ -548,6 +551,8 @@ def main(argv: list[str] | None = None) -> None:
         "--absolute", action="store_true", help="features not relative to the healthy start"
     )
     parser.add_argument("--epochs", type=int, default=defaults.epochs)
+    parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
+    parser.add_argument("--predict-batch-size", type=int, default=defaults.predict_batch_size)
     parser.add_argument("--lr", type=float, default=defaults.lr)
     parser.add_argument("--d", type=int, default=defaults.d)
     parser.add_argument("--dropout", type=float, default=defaults.dropout)
@@ -569,6 +574,7 @@ def main(argv: list[str] | None = None) -> None:
         epochs=args.epochs, lr=args.lr,
         d=args.d, dropout=args.dropout, device=args.device,
         precision=args.precision,
+        batch_size=args.batch_size, predict_batch_size=args.predict_batch_size,
     )  # fmt: skip
     out = run(
         args.encoder, tuple(args.arms), args.run_id, args.folds, args.seeds, cfg, args.dataset,

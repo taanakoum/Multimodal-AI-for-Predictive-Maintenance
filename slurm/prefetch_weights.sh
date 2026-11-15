@@ -18,5 +18,5 @@ for repo in [
     path = snapshot_download(repo)
     print("ok", repo, path)
 PY
-echo "Loading every checkpoint offline is tested by the step-0 job on a compute node"
-echo "(sbatch slurm/checks.sbatch), not here: no heavy work on the login node."
+echo "Verify cached checkpoints on a compute node:"
+echo "sbatch slurm/job.sbatch python -m pytest -m weights --run-weights"

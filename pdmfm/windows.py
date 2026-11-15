@@ -129,7 +129,7 @@ def source_fingerprint(dataset: str) -> str | None:
 def window_signature(spec: DatasetSpec, limit: int | None = None) -> dict:
     return {
         **(
-            {"reader_policy": "flank-only-verified-inserts-clock-v2"}
+            {"reader_policy": "flank-only-verified-inserts-clock-v3"}
             if spec.name == "matwi"
             else {}
         ),

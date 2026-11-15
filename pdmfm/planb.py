@@ -1,5 +1,5 @@
 """Stage 4: the Plan B baseline (plan: per-modality evidential heads, combined by
-Dempster-Shafer and MoNIG; AdamW 1e-3; 50 epochs; 5 outer folds x 3 seeds).
+Dempster-Shafer and MoNIG; AdamW 1e-3; 50 epochs; 5 outer folds x seed 0).
 
 For each fold and seed: fit on the fold's training units; pick the epoch and fit one
 temperature on its inner-validation units; score its test units:
@@ -899,7 +899,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--folds", nargs="+", type=int, default=list(range(1, protocols.N_FOLDS + 1))
     )
-    parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    parser.add_argument("--seeds", nargs="+", type=int, default=[0])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=256)
     defaults = TrainConfig()

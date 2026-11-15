@@ -263,6 +263,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--no-photos", action="store_true")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--epochs", type=int, default=TrainConfig().epochs)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--force", action="store_true", help="run on a busy machine (CPU only)")
     args = parser.parse_args(argv)
@@ -272,7 +274,8 @@ def main(argv: list[str] | None = None) -> None:
         claim_resources("tune", min_idle_cpus=2.0, min_free_ram_gb=1.0, force=args.force)
     search(
         args.dataset, args.encoder, tuple(args.arms), args.run_id, parse_grid(args.grid),
-        TrainConfig(device=args.device), args.folds, photos=not args.no_photos,
+        TrainConfig(device=args.device, epochs=args.epochs), args.folds, seed=args.seed,
+        photos=not args.no_photos,
         out_root=args.out,
     )  # fmt: skip
 

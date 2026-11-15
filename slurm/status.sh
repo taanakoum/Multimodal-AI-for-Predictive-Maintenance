@@ -53,7 +53,7 @@ done
 [ "$found" -eq 1 ] || echo "  none yet"
 
 echo
-echo "== Plan B runs (results of 15 = 5 outer folds x 3 seeds)"
+echo "== Plan B runs (seed 0: 1 result per isolated task, 5 per pooled CV run)"
 found=0
 for folder in runs/planb/*/; do
     [ -d "$folder" ] || continue
@@ -61,7 +61,7 @@ for folder in runs/planb/*/; do
     n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
     summary=""
     [ -f "${folder}summary.md" ] && summary="  summary: ${folder}summary.md"
-    echo "  $(basename "$folder"): $n of 15$summary"
+    echo "  $(basename "$folder"): $n results$summary"
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 
@@ -86,13 +86,13 @@ done
 [ "$found" -eq 1 ] || echo "  none yet"
 
 echo
-echo "== RUL runs (results of 15 = 5 outer folds x 3 seeds)"
+echo "== RUL runs (seed 0: 1 result per isolated task, 5 per pooled CV run)"
 found=0
 for folder in runs/rul/*/; do
     [ -d "$folder" ] || continue
     found=1
     n=$(find "$folder" -maxdepth 1 -name 'fold*-seed*.json' | wc -l)
-    echo "  $(basename "$folder"): $n of 15"
+    echo "  $(basename "$folder"): $n results"
 done
 [ "$found" -eq 1 ] || echo "  none yet"
 
@@ -114,7 +114,7 @@ done
 [ "$found" -eq 1 ] || echo "  none yet"
 
 echo
-echo "== Baselines (fold x seed results: 5 for gbm and probe, 15 for patchtst) and physics checks"
+echo "== Baselines (fold x seed results: 5 per method with seed 0) and physics checks"
 found=0
 for folder in runs/baselines/*/; do
     [ -d "$folder" ] || continue
@@ -130,9 +130,36 @@ done
 [ "$found" -eq 1 ] || echo "  none yet"
 
 echo
+echo "== Array manifests (isolated worker status)"
+for manifest in runs/jobs/*.json; do
+    [ -f "$manifest" ] || continue
+    python - "$manifest" <<'EOF'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text())
+if "tasks" not in manifest:
+    raise SystemExit(0)
+finished, failed = 0, []
+for task in manifest["tasks"]:
+    status = path.with_suffix("") / (task["id"] + ".json")
+    if not status.exists():
+        continue
+    state = json.loads(status.read_text())
+    if state["returncode"] == 0:
+        finished += 1
+    else:
+        failed.append(task["id"])
+print(f"  {path.name}: {finished}/{len(manifest['tasks'])} succeeded, {len(failed)} failed")
+for name in failed:
+    print(f"    inspect {path.with_suffix('') / (name + '.out')}")
+EOF
+done
+
+echo
 echo "== Logs with an error (time-limit stops are expected and not listed; read a log's end with: tail -n 40 FILE)"
 found=0
-for log in runs/logs/*.out; do
+for log in runs/logs/*.out runs/jobs/*/*.out; do
     [ -f "$log" ] || continue
     last=$(grep -E "Traceback|Error:|error:|CANCELLED|oom-kill" "$log" | grep -v "DUE TO TIME LIMIT" | tail -n 1)
     if [ -n "$last" ]; then

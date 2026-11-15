@@ -11,6 +11,7 @@ only for its own fold.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -390,3 +391,8 @@ def test_the_backbone_fixes_width_and_head_while_tuning_keeps_the_recipe(root):
     assert any("pretrained tensors loaded" in m for m in messages)
     unchanged = TrainConfig(d=32, init=template)
     assert pretrain.architecture(unchanged, 1, 0, log=quiet) == unchanged
+    # A source's Gate-2 fusion can disagree with the shared backbone consensus.
+    # Fine-tuning must retain the stage whose parameters were actually pretrained.
+    fused_recipe = replace(unchanged, fusion="concat", lr=0.0003)
+    compatible = pretrain.architecture(fused_recipe, 1, 0, log=quiet)
+    assert compatible.fusion == "late" and compatible.lr == 0.0003

@@ -14,6 +14,7 @@ inner-validation units):
 * ``paderborn``: 3 classes, by bearing; balanced accuracy.
 * ``xjtu_sy``: normalized RUL, by bearing; RMSE.
 * ``nonastreda``: 3 wear classes from force only, by tool; balanced accuracy.
+* ``matwi``: 3 pure flank-wear classes, by tool; balanced accuracy.
 
 Rule: rank the candidates per task; the lowest mean rank wins; a tie goes to the cheaper
 encoder. The rule is also applied per outer fold, on that fold's validation splits only (and
@@ -26,8 +27,8 @@ All candidates of a run are scored on the same rows (the windows every one of th
 cached), so a 10 % subsample of one candidate restricts the whole comparison to it.
 Tasks whose windows or features are missing are skipped and reported. Arms a dataset lacks
 are dropped from a candidate (``T+E`` is ``T`` on Nonastreda, which has no E arm); a
-candidate left with no arm gets the worst rank on that task, so it cannot win by skipping
-a task. An encoder name with
+candidate left with no arm gets the worst rank on that task and is ineligible for shared
+selection, so it cannot win by skipping a task. An encoder name with
 ``{fold}`` (``patchtst-fold{fold}:T``) uses fold k's own model on fold k (fold 1 for CWRU,
 whose 3 hp validation recordings no fold pretrains on).
 
@@ -89,6 +90,10 @@ TASKS = {
     "nonastreda": Task(
         "nonastreda", "nonastreda", "classification", "class_key", "unit",
         lambda m: [protocols.nonastreda_fold(m, k) for k in range(1, protocols.N_FOLDS + 1)],
+    ),
+    "matwi": Task(
+        "matwi", "matwi", "classification", "class_key", "unit",
+        lambda m: [protocols.matwi_fold(m, k) for k in range(1, protocols.N_FOLDS + 1)],
     ),
 }  # fmt: skip
 
@@ -286,7 +291,9 @@ def run(
     results = pd.DataFrame(records)
     summary = summarize(results) if len(results) else pd.DataFrame()
     ranked = (
-        summary[summary["is_candidate"] & summary["mean_rank"].notna()] if len(summary) else summary
+        summary[summary["is_candidate"] & summary["eligible"] & summary["mean_rank"].notna()]
+        if len(summary)
+        else summary
     )
     winner = ranked.iloc[0]["candidate"] if len(ranked) else None
     fold_winners = per_fold_winners(results) if len(results) else {}
@@ -332,7 +339,9 @@ def per_fold_winners(results: pd.DataFrame) -> dict[str, str]:
         if not len(part):
             continue
         summary = summarize(pd.DataFrame(part))
-        ranked = summary[summary["is_candidate"] & summary["mean_rank"].notna()]
+        ranked = summary[
+            summary["is_candidate"] & summary["eligible"] & summary["mean_rank"].notna()
+        ]
         if len(ranked):
             winners[str(fold)] = str(ranked.iloc[0]["candidate"])
     return winners
@@ -368,12 +377,17 @@ def summarize(results: pd.DataFrame) -> pd.DataFrame:
     ranks = table.pivot(index="candidate", columns="task", values="rank")
     summary = wide.add_prefix("score_").join(ranks.add_prefix("rank_"))
     summary["mean_rank"] = ranks.mean(axis=1)
+    # One shared encoder/arm choice must actually serve every scored source task.
+    # A worst rank on an unsupported task alone can still win the average rank.
+    summary["eligible"] = wide.notna().all(axis=1)
     summary["is_candidate"] = table.groupby("candidate")["is_candidate"].first()
     summary["cost"] = [cost(c.split(":")[0]) for c in summary.index]
     summary = summary.reset_index()
     order = np.where(np.asarray(summary["is_candidate"], dtype=bool), 0, 1)  # candidates first
-    summary = summary.assign(_order=order).sort_values(["_order", "mean_rank", "cost", "candidate"])
-    return summary.drop(columns="_order").reset_index(drop=True)
+    summary = summary.assign(_order=order, _ineligible=~summary["eligible"]).sort_values(
+        ["_order", "_ineligible", "mean_rank", "cost", "candidate"]
+    )
+    return summary.drop(columns=["_order", "_ineligible"]).reset_index(drop=True)
 
 
 def _number(value, digits: int) -> str:

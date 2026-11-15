@@ -64,6 +64,7 @@ import torch
 from torch import nn
 
 from pdmfm import protocols
+from pdmfm.compute import configure_cuda
 from pdmfm.model.fusion import FUSIONS, STAGES, FusionModel, build_model
 from pdmfm.model.inputs import CHANNEL_EMBEDDING, TaskInputs, assemble
 from pdmfm.model.late import LateEvidential
@@ -546,6 +547,7 @@ def pretrain_one(
     rng = np.random.default_rng(seed)
     generator = torch.Generator().manual_seed(seed)
     device = torch.device(cfg.device)
+    configure_cuda(device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
     pre = Pretrainer(sources, cfg).to(device)
@@ -796,11 +798,11 @@ def initialize(model: nn.Module, path: str | Path, dataset: str, fold: int | Non
     return {"loaded": loaded, "fold": meta["fold"], "epoch": meta.get("epoch")}
 
 
-ARCHITECTURE = ("d", "head")  # fixed by the backbone: its tensors' shapes and the head type
+ARCHITECTURE = ("d", "head", "fusion")  # tensors, head type, and shared fusion stage
 
 
 def architecture(cfg: TrainConfig, fold: int, seed: int, log=print) -> TrainConfig:
-    """``cfg`` with the width and head of the backbone it fine-tunes (``cfg.init``). One
+    """``cfg`` with the width, head and fusion of the backbone it fine-tunes (``cfg.init``). One
     backbone serves every dataset, so these come from pretraining, not from one dataset's
     tuning (which may have chosen another width for training from scratch); the training
     recipe (learning rate, dropout, ...) stays as tuned."""
@@ -824,7 +826,15 @@ def shared_choices(paths: list[Path]) -> dict[int, dict]:
     """
     from pdmfm.planb import load_per_fold
 
-    choices = [load_per_fold(path) for path in paths]
+    # Combine tune + Gate-2 for each source before seeking agreement across sources.
+    # Counting those as separate sources would make unrelated missing keys veto every
+    # override. Gate-2 owns the recipe it actually evaluated, as in final fine-tuning.
+    grouped: dict[str, list[tuple[int, Path]]] = {}
+    for path in paths:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        source = data.get("dataset", str(path))  # old anonymous files remain separate votes
+        grouped.setdefault(source, []).append((int("model" in data), Path(path)))
+    choices = [load_per_fold(*(p for _, p in sorted(group))) for group in grouped.values()]
     folds = sorted({k for item in choices for k in item})
     result = {}
     for fold in folds:
@@ -854,7 +864,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--folds", nargs="+", type=int, default=list(range(1, protocols.N_FOLDS + 1))
     )
-    parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
+    parser.add_argument("--seeds", nargs="+", type=int, default=[0])
     defaults = PretrainConfig()
     for name in ("epochs", "batch_size", "steps_per_epoch", "d"):
         parser.add_argument(

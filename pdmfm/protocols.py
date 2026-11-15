@@ -27,6 +27,7 @@ import pandas as pd
 from pdmfm.sources import PADERBORN_HEALTHY, PADERBORN_REAL
 
 N_FOLDS = 5
+SIGNATURE = "grouped-five-outer-four-inner-v1"
 NONASTREDA_TOOLS = tuple(f"T{i}" for i in range(1, 11))
 XJTU_BEARINGS = tuple(f"Bearing{c}_{i}" for c in (1, 2, 3) for i in range(1, 6))
 PHM2010_LABELLED = ("c1", "c4", "c6")
@@ -163,6 +164,77 @@ SOURCE_FOLDS = {
     "xjtu_sy": xjtu_fold,
     "paderborn": paderborn_fold,
 }
+
+
+def audit_folds(dataset: str, manifest: pd.DataFrame) -> dict:
+    """Report actual group coverage; never treat a partial smoke store as full CV."""
+    if dataset == "cwru":
+        split = cwru_gate1(manifest)
+        present = set(manifest.load_hp.to_numpy())
+        if present != {0, 1, 2, 3}:
+            raise ValueError("CWRU full evaluation requires all four loads")
+        return {
+            "dataset": dataset,
+            "protocol": "condition-shift",
+            "train_rows": int(split.train.sum()),
+            "validation_rows": int(split.val.sum()),
+            "new_unit_generalization": False,
+        }
+    expected = {
+        "nonastreda": set(NONASTREDA_TOOLS),
+        "matwi": set(sum(MATWI_GROUPS, ())),
+        "xjtu_sy": set(XJTU_BEARINGS),
+        "paderborn": set(sum(PADERBORN_SOURCE_FOLDS, ())),
+    }
+    if dataset not in expected:
+        return {"dataset": dataset, "protocol": "held-out/optional; no source CV"}
+    units = set(_units(manifest))
+    missing = expected[dataset] - units
+    if missing:
+        raise ValueError(f"{dataset}: missing source units: {sorted(missing)}")
+    if dataset != "paderborn" and units != expected[dataset]:
+        raise ValueError(f"{dataset}: unexpected units outside the registered CV")
+    tested = np.zeros(len(manifest), dtype=int)
+    records = []
+    for fold in range(1, N_FOLDS + 1):
+        outer = SOURCE_FOLDS[dataset](manifest, fold)
+        outer.assert_unit_disjoint(manifest)
+        if any(not getattr(outer, p).any() for p in ("train", "val", "test")):
+            raise ValueError(f"{dataset}: empty split in outer fold {fold}")
+        tested += outer.test
+        validated = np.zeros(len(manifest), dtype=int)
+        for inner in inner_folds(dataset, manifest, fold):
+            inner.assert_unit_disjoint(manifest)
+            if (inner.train & outer.test).any() or (inner.val & outer.test).any():
+                raise ValueError("outer test units entered an inner split")
+            validated += inner.val
+        if not np.array_equal(validated, (outer.train | outer.val).astype(int)):
+            raise ValueError(
+                "inner validation does not cover the non-test source pool exactly once"
+            )
+        record = {
+            "fold": fold,
+            **{p: sorted(outer.units(manifest, p)) for p in ("train", "val", "test")},
+        }
+        if "class_key" in manifest:
+            bags = manifest.drop_duplicates("bag") if "bag" in manifest else manifest
+            for part in ("train", "val", "test"):
+                record[f"{part}_class_bags"] = (
+                    bags.loc[bags.unit.astype(str).isin(record[part]), "class_key"]
+                    .value_counts()
+                    .to_dict()
+                )
+        records.append(record)
+    source = np.isin(_units(manifest), sorted(expected[dataset]))
+    if not np.array_equal(tested, source.astype(int)):
+        raise ValueError("source test coverage must be exactly once; targets never enter source CV")
+    return {
+        "dataset": dataset,
+        "protocol": SIGNATURE,
+        "source_units": len(expected[dataset]),
+        "seed_policy": "one fixed seed; intervals resample physical test units",
+        "folds": records,
+    }
 
 
 def inner_folds(dataset: str, manifest: pd.DataFrame, k: int) -> list[Split]:

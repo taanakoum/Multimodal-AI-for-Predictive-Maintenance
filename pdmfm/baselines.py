@@ -544,7 +544,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--folds", nargs="+", type=int, default=list(range(1, protocols.N_FOLDS + 1))
     )
-    parser.add_argument("--seeds", nargs="+", type=int, help="default: 0 (gbm, probe), 0 1 2")
+    parser.add_argument("--seeds", nargs="+", type=int, help="default: seed 0 for every method")
     parser.add_argument("--epochs", type=int, default=30, help="patchtst only")
     parser.add_argument("--batch-size", type=int, default=64, help="patchtst only (windows)")
     parser.add_argument("--lr", type=float, default=3e-4, help="patchtst only")
@@ -557,7 +557,7 @@ def main(argv: list[str] | None = None) -> None:
         from pdmfm.resources import claim_resources
 
         claim_resources("baselines", min_idle_cpus=2.0, min_free_ram_gb=1.0, force=args.force)
-    seeds = args.seeds or ([0, 1, 2] if args.method == "patchtst" else [0])
+    seeds = args.seeds or [0]
     cfg = {"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
            "train_segments": args.train_segments, "device": args.device}  # fmt: skip
     out = run(

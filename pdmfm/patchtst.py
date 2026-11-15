@@ -155,6 +155,9 @@ def pretrain(
         "corpus": counts,
     }
     device_ = torch.device(device)
+    from pdmfm.compute import configure_cuda
+
+    configure_cuda(device_)
     if device_.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
     model = PatchTSTForPretraining(PatchTSTConfig(**settings["model"]))

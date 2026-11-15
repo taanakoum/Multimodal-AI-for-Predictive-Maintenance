@@ -30,7 +30,7 @@ import torch
 
 from pdmfm import losses
 from pdmfm import metrics as M
-from pdmfm.compute import InputBank, autocast
+from pdmfm.compute import InputBank, autocast, configure_cuda
 from pdmfm.model.fusion import build_model
 from pdmfm.model.inputs import TaskInputs
 from pdmfm.model.late import LateEvidential
@@ -306,6 +306,7 @@ def fit(
     device = torch.device(cfg.device)
     if cfg.predict_batch_size < 1 or cfg.diagnostic_every < 1:
         raise ValueError("prediction batch size and diagnostic frequency must be positive")
+    configure_cuda(device)
     if cfg.fusion != "late" and cfg.modality_dropout > 0:
         # Loss-level dropout recombines the experts' opinions only; a fusion stage has
         # already seen every modality, so fusion candidates drop inputs (input_dropout).

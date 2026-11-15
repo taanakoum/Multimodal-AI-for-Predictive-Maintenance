@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pdmfm import lifecycle
-from pdmfm.datasets.matwi import MATWI, sensor_clock
+from pdmfm.datasets.matwi import MATWI, _seconds, acquisition_rate, sensor_clock
 from tests.integration.test_readers import write_matwi
 
 
@@ -36,6 +36,21 @@ def test_matwi_clock_uses_acquisition_not_filename_and_rejects_backwards(tmp_pat
     path.write_text("0,0,0,0,0,2023-01-01 00:00:02\n0,0,0,0,0,2023-01-01 00:00:01\n")
     with pytest.raises(ValueError, match="timestamps"):
         sensor_clock(path)
+
+
+def test_matwi_clock_is_independent_of_pandas_datetime_resolution():
+    stamps = pd.Series(pd.date_range("2023-01-01", periods=5, freq="1ms"))
+    seconds = _seconds(stamps.astype("datetime64[us]"))
+    np.testing.assert_allclose(seconds, 1672531200 + np.arange(5) / 1000, rtol=0, atol=1e-6)
+    assert seconds[0] > 1e9
+    assert acquisition_rate(stamps) == pytest.approx(1000)
+
+
+@pytest.mark.parametrize("offsets", [[0, 1, 1, 3], [0, 1, 0, 3], [0, 1, 2, 9]])
+def test_matwi_full_clock_rejects_interior_corruption(offsets):
+    stamps = pd.Series(pd.Timestamp("2023-01-01") + pd.to_timedelta(offsets, unit="ms"))
+    with pytest.raises(ValueError, match="acquisition timestamps"):
+        acquisition_rate(stamps)
 
 
 def test_gap_durations_use_past_and_duplicates_never_move_signals_backwards():

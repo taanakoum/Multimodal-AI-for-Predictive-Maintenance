@@ -40,7 +40,7 @@ EPS = 1e-12
 
 def rational_ratio(src_hz: float, dst_hz: float, max_denominator: int = 1000) -> tuple[int, int]:
     """(up, down) with up/down ≈ dst/src; exact for the rates used in the plan."""
-    if src_hz <= 0 or dst_hz <= 0:
+    if not np.isfinite([src_hz, dst_hz]).all() or src_hz <= 0 or dst_hz <= 0:
         raise ValueError("rates must be positive")
     ratio = Fraction(dst_hz / src_hz).limit_denominator(max_denominator)
     if abs(float(ratio) - dst_hz / src_hz) > 1e-4 * dst_hz / src_hz:
@@ -50,9 +50,11 @@ def rational_ratio(src_hz: float, dst_hz: float, max_denominator: int = 1000) ->
 
 def resample(x: np.ndarray, src_hz: float, dst_hz: float, axis: int = -1) -> np.ndarray:
     """Anti-aliased resampling (Kaiser-windowed polyphase FIR, scipy ``resample_poly``)."""
+    up, down = rational_ratio(src_hz, dst_hz)
+    if not np.isfinite(x).all():
+        raise ValueError("nonfinite signal samples")
     if abs(src_hz - dst_hz) <= 1e-9 * dst_hz:
         return np.asarray(x, dtype=np.float32)
-    up, down = rational_ratio(src_hz, dst_hz)
     y = sps.resample_poly(
         np.asarray(x, dtype=np.float64), up, down, axis=axis, window=("kaiser", 5.0)
     )
@@ -94,6 +96,10 @@ def band_limit(
 def model_input(x: np.ndarray, rate_hz: float) -> tuple[np.ndarray, float]:
     """(signal, rate) as every sensor arm sees it: resampled down to the model rate when
     faster, then band-limited to :data:`COMMON_BAND_HZ`. Slower signals keep their rate."""
+    if not np.isfinite(rate_hz) or rate_hz <= 0:
+        raise ValueError("rate must be finite and positive")
+    if not np.isfinite(x).all():
+        raise ValueError("nonfinite signal samples")
     if rate_hz > MODEL_RATE_HZ:
         x, rate_hz = resample(x, rate_hz, MODEL_RATE_HZ), MODEL_RATE_HZ
     return band_limit(x, rate_hz), rate_hz

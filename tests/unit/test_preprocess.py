@@ -5,6 +5,21 @@ from scipy import signal as sps
 from pdmfm import preprocess as pp
 
 
+@pytest.mark.parametrize("rate", [0, -1, float("nan"), float("inf")])
+def test_invalid_acquisition_rates_are_rejected_even_without_resampling(rate):
+    with pytest.raises(ValueError, match="positive"):
+        pp.model_input(np.ones(32), rate)
+    with pytest.raises(ValueError, match="positive"):
+        pp.resample(np.ones(32), rate, rate)
+
+
+def test_nonfinite_signals_fail_before_filtering_spreads_corruption():
+    x = np.ones(100)
+    x[50] = np.nan
+    with pytest.raises(ValueError, match="nonfinite"):
+        pp.model_input(x, 12000)
+
+
 def tone(freq, rate, seconds, amplitude=1.0):
     t = np.arange(int(rate * seconds)) / rate
     return amplitude * np.sin(2 * np.pi * freq * t)

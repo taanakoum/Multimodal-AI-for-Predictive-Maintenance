@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from pdmfm import lifecycle, losses
-from pdmfm.compute import InputBank, autocast
+from pdmfm.compute import InputBank, autocast, configure_cuda
 from pdmfm.model.inputs import Modality, TaskInputs
 from pdmfm.train import selection_score
 from pdmfm.utils import run_identity
@@ -137,3 +137,41 @@ def test_shared_pretraining_decisions_are_fold_local_and_order_independent(tmp_p
     expected = {1: {"fusion": "late"}, 2: {"fusion": "concat", "d": 128}}
     assert shared_choices(paths) == expected
     assert shared_choices(list(reversed(paths))) == expected
+
+
+def test_shared_choices_merge_searches_per_source_before_consensus(tmp_path):
+    import json
+
+    from pdmfm.pretrain import shared_choices
+
+    paths = []
+    for dataset in ("matwi", "nonastreda"):
+        for kind, overrides in (
+            ("tune", {"d": 128, "lr": 0.001}),
+            ("gate2", {"fusion": "concat", "lr": 0.0003}),
+        ):
+            path = tmp_path / f"{dataset}-{kind}.json"
+            report = {"dataset": dataset, "per_fold": {"1": {"overrides": overrides}}}
+            if kind == "gate2":
+                report["model"] = "concat"
+            path.write_text(json.dumps(report))
+            paths.append(path)
+    expected = {1: {"d": 128, "fusion": "concat", "lr": 0.0003}}
+    assert shared_choices(paths) == expected
+    assert shared_choices(list(reversed(paths))) == expected
+
+
+def test_cuda_worker_fraction_is_applied_before_allocating(monkeypatch):
+    calls = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda,
+        "set_per_process_memory_fraction",
+        lambda fraction, device: calls.append((fraction, str(device))),
+    )
+    monkeypatch.setenv("PDMFM_GPU_MEMORY_FRACTION", "0.45")
+    configure_cuda("cuda:0")
+    assert calls == [(0.45, "cuda:0")]
+    monkeypatch.setenv("PDMFM_GPU_MEMORY_FRACTION", "1.1")
+    with pytest.raises(ValueError, match="fraction|FRACTION"):
+        configure_cuda("cuda:0")

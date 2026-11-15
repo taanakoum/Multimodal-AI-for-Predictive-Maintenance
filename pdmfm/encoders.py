@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from pdmfm import preprocess as pp
-from pdmfm.compute import autocast
+from pdmfm.compute import autocast, configure_cuda
 
 
 def hf_revision(repo: str) -> str | None:
@@ -57,6 +57,7 @@ def _torch_device(device: str):
 
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available")
+    configure_cuda(device)
     return torch.device(device)
 
 

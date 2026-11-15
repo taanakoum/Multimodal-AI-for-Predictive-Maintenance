@@ -55,7 +55,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pdmfm import arms, sensors
+from pdmfm import arms, protocols, sensors
 from pdmfm import preprocess as pp
 from pdmfm import texts as text_specs
 from pdmfm.features import FeatureStore
@@ -498,6 +498,7 @@ def assemble(
         inputs.y_reg = manifest[target].to_numpy(dtype=float)
     inputs.description = {
         "input_policy": "independent-modality-masks-v2",
+        "cross_validation": protocols.SIGNATURE,
         "feature_identity": feature_identity(dataset, root, encoder, arm_list),
         "dataset": dataset,
         "encoder": encoder,

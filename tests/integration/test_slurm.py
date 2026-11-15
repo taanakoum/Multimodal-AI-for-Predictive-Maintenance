@@ -55,6 +55,27 @@ def test_chain_rejects_a_bad_part_count():
     assert bash(SLURM / "chain.sh", "zero", "slurm/job.sbatch").returncode == 2
 
 
+def test_submit_uses_one_gpu_elements_and_bounds_active_array_tasks(tmp_path):
+    from pdmfm import jobs
+    from pdmfm.utils import write_json_atomic
+
+    manifest = tmp_path / "tasks.json"
+    write_json_atomic(manifest, jobs.make("planb", "run", ["matwi", "nonastreda"], [1, 2, 3, 4, 5]))
+    log = tmp_path / "submission.txt"
+    fake = tmp_path / "bin/sbatch"
+    fake.parent.mkdir()
+    fake.write_text('#!/bin/bash\nprintf "%s\\n" "$*" > "$SBATCH_LOG"\necho 12345\n')
+    fake.chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake.parent}:{os.environ['PATH']}", "SBATCH_LOG": str(log)}
+    result = bash(SLURM / "submit.sh", manifest, 2, "--dependency=afterok:12000", env=env)
+    assert result.returncode == 0, result.stderr
+    command = log.read_text()
+    assert "--array=0-4%4" in command and "--dependency=afterok:12000" in command
+    assert command.strip().endswith(f"slurm/array.sbatch {manifest} 2")
+    wrapper = (SLURM / "array.sbatch").read_text()
+    assert "#SBATCH --gres=gpu:1" in wrapper and "#SBATCH --cpus-per-task=8" in wrapper
+
+
 @pytest.mark.parametrize("script", ["job.sbatch", "cpu.sbatch", "checks.sbatch"])
 def test_job_scripts_refuse_to_run_outside_slurm(script):
     env = {k: v for k, v in os.environ.items() if k != "SLURM_JOB_ID"}
@@ -90,7 +111,7 @@ def test_status_counts_plan_b_results(tmp_path):
     env = {**os.environ, "PDMFM_DATA_ROOT": str(tmp_path / "data")}
     result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "planb-v1-nonastreda: 2 of 15" in result.stdout and "summary.md" in result.stdout
+    assert "planb-v1-nonastreda: 2 results" in result.stdout and "summary.md" in result.stdout
 
 
 def test_status_counts_gate2_and_rul_results(tmp_path):
@@ -107,7 +128,7 @@ def test_status_counts_gate2_and_rul_results(tmp_path):
     result = bash(tmp_path / "slurm" / "status.sh", env=env, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert "gate2-v1-nonastreda: concat 1, planb 2; model planb" in result.stdout
-    assert "rul-v1-xjtu: 1 of 15" in result.stdout
+    assert "rul-v1-xjtu: 1 results" in result.stdout
 
 
 def test_status_counts_baseline_runs(tmp_path):

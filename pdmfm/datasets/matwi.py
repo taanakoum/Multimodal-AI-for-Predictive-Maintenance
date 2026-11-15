@@ -69,7 +69,26 @@ def read_sets(path: Path) -> dict[int, dict]:
 
 
 def _seconds(stamps) -> np.ndarray:
-    return pd.to_datetime(stamps).astype("int64").to_numpy() / 1e9
+    # Pandas 3 can infer datetime64[us]; an integer cast alone no longer implies ns.
+    return pd.to_datetime(stamps).to_numpy(dtype="datetime64[ns]").astype(np.int64) / 1e9
+
+
+def acquisition_rate(stamps, path="MATWI") -> float:
+    """Verify the complete clock before treating rows as uniformly sampled signals.
+
+    Permit microsecond quantisation/jitter (5% of median spacing), but reject missing,
+    repeated, reversed or discontinuous timestamps instead of compressing a gap.
+    """
+    clock = pd.to_datetime(stamps).to_numpy(dtype="datetime64[ns]")
+    if len(clock) < 2 or np.isnat(clock).any():
+        raise ValueError(f"{path}: missing acquisition timestamps")
+    differences = np.diff(clock.astype(np.int64)).astype(np.float64) / 1e9
+    spacing = float(np.median(differences))
+    if spacing <= 0 or (differences <= 0).any():
+        raise ValueError(f"{path}: nonmonotonic acquisition timestamps")
+    if np.max(np.abs(differences - spacing)) > max(2e-6, spacing * 0.05):
+        raise ValueError(f"{path}: discontinuous acquisition timestamps")
+    return len(clock) / (float(differences.sum()) + differences[0])
 
 
 def sensor_clock(path: Path) -> tuple[pd.Timestamp, float]:
@@ -250,9 +269,13 @@ class MATWI:
         )
 
     def load(self, info: RecordingInfo) -> Recording:
-        values = pd.read_csv(info.meta["path"], header=None).iloc[:, :5].to_numpy(np.float64)
-        _, duration = sensor_clock(Path(info.meta["path"]))
-        rate = len(values) / duration
+        table = pd.read_csv(info.meta["path"], header=None)
+        if table.shape[1] != 6:
+            raise ValueError(f"{info.recording_id}: expected five channels and acquisition clock")
+        values = table.iloc[:, :5].to_numpy(np.float64)
+        if not np.isfinite(values).all():
+            raise ValueError(f"{info.recording_id}: nonfinite sensor values")
+        rate = acquisition_rate(table.iloc[:, 5], info.meta["path"])
         channels = {
             name: ChannelData(
                 name,

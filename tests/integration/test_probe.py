@@ -8,7 +8,7 @@ import pytest
 from pdmfm import probe, protocols, windows
 from pdmfm.encoders import StatsEncoder
 from pdmfm.features import FeatureStore
-from tests.support.synthetic import cwru_reader, nonastreda_reader, xjtu_reader
+from tests.support.synthetic import cwru_reader, matwi_reader, nonastreda_reader, xjtu_reader
 
 
 def quiet(*_):
@@ -24,7 +24,12 @@ def named(name: str):
 def root(tmp_path_factory):
     root = tmp_path_factory.mktemp("gate1")
     stores = FeatureStore(root / "features")
-    readers = {"cwru": cwru_reader(), "nonastreda": nonastreda_reader(), "xjtu_sy": xjtu_reader(30)}
+    readers = {
+        "cwru": cwru_reader(),
+        "nonastreda": nonastreda_reader(),
+        "matwi": matwi_reader(),
+        "xjtu_sy": xjtu_reader(30),
+    }
     for name, reader in readers.items():
         store = windows.build(name, out=root / "windows" / name, reader=reader, log=quiet)
         for arm in ("F", "T", "E") if store.spec.bearing else ("F", "T"):
@@ -47,10 +52,11 @@ def test_probe_scores_every_available_task(root):
     assert report["winner"] in {"stats:F", "stats:T", "stats:T+F"}
     out = root / "runs" / "test"
     results = pd.read_csv(out / "results.csv")
-    assert len(results) == (1 + 5 + 5) * 3  # cwru 1 split, nonastreda and xjtu_sy 5 folds
+    assert len(results) == (1 + 5 + 5 + 5) * 3  # CWRU 1 split, three grouped tasks x 5
     score = results.groupby(["task", "candidate"])[["balanced_accuracy", "rmse"]].mean()
     assert score.loc[("cwru", "stats:F"), "balanced_accuracy"] >= 0.9  # class tones: spectrum
     assert score.loc[("nonastreda", "stats:T"), "balanced_accuracy"] >= 0.8  # force level: time
+    assert score.loc[("matwi", "stats:F"), "balanced_accuracy"] >= 0.8
     assert score.loc[("xjtu_sy", "stats:T"), "rmse"] < 0.3  # growing vibration: RUL
     assert "Winner" in (out / "summary.md").read_text()
 
@@ -127,6 +133,33 @@ def test_candidate_syntax():
     assert probe.parse_candidate("moment:T+E") == ("moment", ("T", "E"))
     with pytest.raises(ValueError):
         probe.parse_candidate("moment")
+
+
+def test_a_candidate_missing_one_source_arm_cannot_win_the_shared_choice():
+    # E wins two bearing tasks, yet has no milling input. A worst rank on milling
+    # still gives it the best mean rank; it must remain ineligible for a shared model.
+    rows = []
+    for task in ("cwru", "paderborn", "nonastreda"):
+        for candidate in ("stats:E", "stats:F"):
+            score = (
+                float("nan")
+                if task == "nonastreda" and candidate == "stats:E"
+                else (0.99 if candidate == "stats:E" else 0.6)
+            )
+            rows.append(
+                {
+                    "task": task,
+                    "candidate": candidate,
+                    "is_candidate": True,
+                    "split": f"{task}-fold1",
+                    "balanced_accuracy": score,
+                }
+            )
+    table = pd.DataFrame(rows)
+    summary = probe.summarize(table).set_index("candidate")
+    assert summary.loc["stats:E", "mean_rank"] < summary.loc["stats:F", "mean_rank"]
+    assert not summary.loc["stats:E", "eligible"]
+    assert probe.per_fold_winners(table) == {"1": "stats:F"}
 
 
 def test_arms_a_dataset_lacks_are_dropped_or_ranked_last(root):

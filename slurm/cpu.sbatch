@@ -26,8 +26,8 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 cd "$SLURM_SUBMIT_DIR" || exit 2
-source slurm/env.sh
 set -eo pipefail
+source slurm/env.sh
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 

@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import nullcontext
 
 import torch
+
+
+def configure_cuda(device):
+    """Honor the share assigned to a packed worker before moving tensors to CUDA."""
+    device = torch.device(device)
+    if device.type != "cuda":
+        return
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is not available")
+    fraction = float(os.environ.get("PDMFM_GPU_MEMORY_FRACTION", "1"))
+    if not 0 < fraction <= 1:
+        raise ValueError("PDMFM_GPU_MEMORY_FRACTION must be in (0, 1]")
+    torch.cuda.set_per_process_memory_fraction(fraction, device)
 
 
 def autocast(device, precision: str = "auto"):
@@ -42,7 +56,10 @@ class InputBank:
             size += sum(v.numel() * v.element_size() for v in self.parts[name].values())
         resident = policy == "cuda"
         if self.device.type == "cuda" and policy == "auto":
-            resident = size <= torch.cuda.mem_get_info(self.device)[0] // 2
+            free, total = torch.cuda.mem_get_info(self.device)
+            fraction = float(os.environ.get("PDMFM_GPU_MEMORY_FRACTION", "1"))
+            allowance = max(0, total * fraction - torch.cuda.memory_allocated(self.device))
+            resident = size <= min(free, allowance) / 2
         if resident and self.device.type != "cuda":
             raise ValueError("cache_device=cuda requires a CUDA training device")
         for part in self.parts.values():
