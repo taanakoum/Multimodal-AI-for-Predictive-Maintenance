@@ -174,11 +174,11 @@ def test_xjtu_sy_reader_orders_snapshots_by_minute(tmp_path):
         np.savetxt(bearing / f"{minute}.csv", values, delimiter=",", header=header, comments="")
     reader = get_reader("xjtu_sy", root=tmp_path)
     infos = reader.index()
-    assert [i.meta["minute"] for i in infos] == [1, 2, 3]
-    assert infos[0].meta["lifetime_min"] == 3 and infos[0].meta["failure"] == "outer race"
+    assert [i.meta["minute"] for i in infos] == [1, 2, 10]
+    assert infos[0].meta["lifetime_min"] == 10 and infos[0].meta["failure"] == "outer race"
     assert infos[0].condition["rpm"] == 2100.0
     last = reader.load(infos[-1])
-    assert last.channels["vib_v"].signal[0] == 10.0 and last.t_offset == 120.0
+    assert last.channels["vib_v"].signal[0] == 10.0 and last.t_offset == 540.0
 
 
 # ----------------------------------------------------------------------------- Najafi
@@ -226,11 +226,18 @@ def test_nonastreda_reader_clock_photos_and_targets(tmp_path, monkeypatch):
         FakeRecord("T1R1B1", "T1", 1, 1, np.ones((1000, 3), np.float32), 0),
         FakeRecord("T2R1B1", "T2", 1, 1, np.ones((500, 3), np.float32), 2),
     ]
-    import types
-
-    fake = types.ModuleType("omnifuser.data")
-    fake.load_nonastreda = lambda root, **kwargs: records
-    monkeypatch.setitem(__import__("sys").modules, "omnifuser.data", fake)
+    raw = np.empty((len(records), 4), dtype=object)
+    for i, record in enumerate(records):
+        raw[i] = [
+            record.record_id + ".jpg",
+            ("sharp", "used", "dulled")[record.label],
+            0,
+            record.force.T,
+        ]
+    savemat(tmp_path / "forces_xyz_raw.mat", {"baseDatastore": raw})
+    (tmp_path / "labels.csv").write_text(
+        "id,image_label\nT1R1B1,sharp\nT1R1B2,sharp\nT2R1B1,dulled\n"
+    )
     (tmp_path / "labels_reg.csv").write_text(
         "id,gaps,flank_wear,overhang\nT1R1B1,1,30.0,2\nT1R1B2,1,40.0,2\nT2R1B1,1,120.0,2\n"
     )
@@ -497,8 +504,8 @@ def test_matwi_labels_follow_the_photo_timestamps(tmp_path):
     assert np.isnan(set1[2].meta["wear_um"]) and set1[2].label is None
     assert set1[3].meta["wear_um"] == 120 and set1[3].label == "dulled"
     assert [i.label for i in set1[:2]] == ["sharp", "sharp"]
-    # Two inserts: the worse of the latest photo of each insert.
-    assert [i.meta["wear_um"] for i in infos if i.unit == "Set02"] == [30, 80, 80, 90]
+    # Chronological adjacency does not establish insert identity.
+    assert all(np.isnan(i.meta["wear_um"]) for i in infos if i.unit == "Set02")
     assert infos[0].condition["speed_text"] == "an unrecorded spindle speed"
 
 

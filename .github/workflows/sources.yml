@@ -35,4 +35,4 @@ jobs:
           uv run --no-sync python scripts/ci/check_sources.py --markdown sources.md
           { echo "## Data sources"; cat sources.md; } >> "$GITHUB_STEP_SUMMARY"
       - name: Integrity of stable sources
-        run: uv run --no-sync pytest -m network -rs tests/test_network.py
+        run: uv run --no-sync pytest -m network --run-network -rs tests/acceptance/test_network.py

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from synthetic import cwru_reader, nonastreda_reader, xjtu_reader
 
 from pdmfm import probe, protocols, windows
 from pdmfm.encoders import StatsEncoder
 from pdmfm.features import FeatureStore
+from tests.support.synthetic import cwru_reader, nonastreda_reader, xjtu_reader
 
 
 def quiet(*_):

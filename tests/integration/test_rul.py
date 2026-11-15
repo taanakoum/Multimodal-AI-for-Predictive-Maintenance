@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from synthetic import build_planb_root
 
 from pdmfm import planb, rul
 from pdmfm.train import TrainConfig
+from tests.support.synthetic import build_planb_root
 
 
 def quiet(*_):
@@ -99,6 +99,7 @@ def trend_snapshots(seed: int = 0, units: int = 24):
     return snaps
 
 
+@pytest.mark.slow
 def test_a_history_learns_what_a_single_snapshot_cannot():
     snaps = trend_snapshots()
     unit = snaps.table["unit"].to_numpy()
@@ -133,6 +134,7 @@ def test_inputs_relative_to_the_healthy_start_are_causal():
     np.testing.assert_allclose(changed[18:], relative[18:], atol=1e-6)
 
 
+@pytest.mark.slow
 def test_relative_inputs_remove_each_bearings_level():
     """On the trend snapshots, the healthy-start reference takes away the per-bearing level
     that made one snapshot ambiguous: a single relative snapshot is enough there."""
@@ -219,7 +221,7 @@ def test_run_writes_plan_b_compatible_results_and_resumes(root):
         rul.run("stats", ("F", "E"), "rul", [1], [0], rul.RULConfig(epochs=4, d=16), **paths(root))
 
 
-def test_comparison_with_plan_b_on_the_same_snapshots(root):
+def test_comparison_with_plan_b_on_the_same_snapshots(root, tmp_path):
     out = rul.run("stats", ("F", "E"), "cmp", [1], [0], rul.RULConfig(epochs=2, d=16),
                   **paths(root))  # fmt: skip
     reference = planb.run(
@@ -239,6 +241,12 @@ def test_comparison_with_plan_b_on_the_same_snapshots(root):
     assert table.loc["RMSE, this - reference", "estimate"] == pytest.approx(gap, rel=1e-6)
     with pytest.raises(ValueError, match="no fold and seed in common"):
         rul.compare(out, root / "runs" / "nothing")
+    other = tmp_path / "fold1-seed0-bags.csv"
+    changed = pd.read_csv(reference / other.name)
+    changed["y_reg"] += 1
+    changed.to_csv(other, index=False)
+    with pytest.raises(ValueError, match="targets differ"):
+        rul.compare(out, tmp_path)
 
 
 def test_command_line(root, tmp_path, monkeypatch):

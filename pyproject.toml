@@ -55,8 +55,13 @@ pdmfm = ["texts/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow and not acceptance' --strict-markers"
 markers = [
+    "unit: isolated numerical, schema and decision contracts",
+    "integration: interfaces between pipeline components",
+    "e2e: synthetic raw input through training and reports",
+    "acceptance: explicitly requested external data or hardware checks",
+    "gpu: requires an actual CUDA device and --run-gpu",
     "network: needs internet access (skipped unless PDMFM_NETWORK_TESTS=1)",
     "data(name, extracted=False): reads a real dataset; skipped when it is not downloaded",
     "weights(repo): needs a pretrained checkpoint in the Hugging Face cache; skipped otherwise",
@@ -69,6 +74,9 @@ extend-exclude = ["Data", "Research papers"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.format]
+line-ending = "lf"
 
 [tool.pyright]
 include = ["pdmfm", "scripts", "tests"]

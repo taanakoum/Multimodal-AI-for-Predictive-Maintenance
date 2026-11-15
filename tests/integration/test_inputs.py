@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import shutil
-import time
 
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import FakeTextEncoder, build_planb_root
 
 from pdmfm import features, protocols, texts
 from pdmfm.encoders import StatsEncoder
 from pdmfm.model import inputs as I
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import FakeTextEncoder, build_planb_root
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +230,9 @@ def test_windows_without_cached_features_are_absent(root, tmp_path):
         window_root=root / "interim" / "windows", feature_root=cache.root,
     )  # fmt: skip
     np.testing.assert_array_equal(inputs.modalities["force"].present, half)
-    assert not inputs.modalities["photo"].present[~half].any()
+    # Independently cached photos remain usable when a sensor extraction is incomplete.
+    expected = I._photo_modality(s, cache.root).present
+    np.testing.assert_array_equal(inputs.modalities["photo"].present, expected)
 
 
 def test_the_description_names_the_inputs(root):
@@ -252,8 +253,7 @@ def test_newest_image_cache_is_used(root, tmp_path):
     newer.mkdir()
     (newer / "paths.csv").write_text("path\nraw/x.png\n")
     np.save(newer / "features.npy", np.ones((1, 5, 8), dtype=np.float16))
-    time.sleep(0.05)
-    (newer / "meta.json").write_text("{}")
+    (newer / "meta.json").write_text('{"complete": true}')
     paths, cached = I._image_cache(tmp_path, "nonastreda", "tool")
     assert paths == ["raw/x.png"] and cached.shape == (1, 5, 8)
     assert old.exists()

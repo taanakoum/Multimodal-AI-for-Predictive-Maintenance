@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from synthetic import cwru_reader, xjtu_reader
 
 from pdmfm import protocols, windows
+from tests.support.synthetic import cwru_reader, xjtu_reader
 
 pytest.importorskip("transformers")
 from pdmfm import patchtst  # noqa: E402
@@ -72,7 +72,7 @@ def test_fold_number_is_checked():
 
 
 def test_a_dataset_with_nothing_allowed_is_left_out(root, tmp_path):
-    from test_windows import paderborn_reader  # K001 (source), KA01 (source), KB27 (target)
+    from tests.integration.test_windows import paderborn_reader
 
     windows.build("paderborn", out=root / "paderborn", reader=paderborn_reader(), log=quiet)
     try:

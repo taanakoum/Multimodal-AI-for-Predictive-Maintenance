@@ -1,6 +1,6 @@
 #!/bin/bash
 # Reproduce the CI workflow locally in a fresh, throwaway environment: CPU torch, no
-# datasets, no OmniFuser. Passing here predicts passing in CI (docs/CI.md):
+# datasets, no private dependencies. Passing here predicts passing in CI (docs/CI.md):
 #   bash scripts/ci/run_local_ci.sh          # Python 3.11
 #   bash scripts/ci/run_local_ci.sh 3.12
 # Needs uv. The environment is created in a temporary folder and deleted afterwards.
@@ -12,7 +12,8 @@ trap 'rm -rf "$WORK"' EXIT
 export UV_PROJECT_ENVIRONMENT="$WORK/venv"  # uv run uses this, never the dev environment
 export PDMFM_DATA_ROOT="$WORK/ci-data"       # empty: real-data tests skip, as in CI
 export PYTHONIOENCODING=utf-8 UV_LINK_MODE=copy
-unset PDMFM_NETWORK_TESTS OMP_NUM_THREADS
+unset PDMFM_NETWORK_TESTS
+export PDMFM_TEST_THREADS=2 OMP_NUM_THREADS=2
 cd "$ROOT"
 start=$(date +%s)
 

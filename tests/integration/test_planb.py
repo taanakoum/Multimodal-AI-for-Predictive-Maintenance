@@ -8,12 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from synthetic import build_planb_root
 
 from pdmfm import planb, protocols, sensors
 from pdmfm.model.inputs import Modality, TaskInputs, assemble
 from pdmfm.model.late import LateEvidential
 from pdmfm.train import TrainConfig, _losses, bag_mean, batch, fit, predict, selection_score
+from tests.support.synthetic import build_planb_root
 
 SMALL = TrainConfig(epochs=2, batch_size=32, d=32)
 
@@ -178,6 +178,27 @@ def test_fit_is_reproducible(nona):
     assert a.y_mean == pytest.approx(float(np.mean(nona.y_reg[train])))
 
 
+def test_interrupted_training_resumes_with_identical_weights(nona, tmp_path):
+    from dataclasses import replace
+
+    split = protocols.nonastreda_fold(nona.manifest, 1)
+    train, val = np.flatnonzero(split.train), np.flatnonzero(split.val)
+    cfg = replace(SMALL, epochs=3, input_dropout=0.3)
+    expected = fit(nona, train, val, cfg, 7, log=quiet)
+    checkpoint = tmp_path / "last.pt"
+
+    def interrupt(message):
+        if "checkpoint epoch 1/3" in message:
+            raise InterruptedError
+
+    with pytest.raises(InterruptedError):
+        fit(nona, train, val, cfg, 7, log=interrupt, checkpoint=checkpoint)
+    actual = fit(nona, train, val, cfg, 7, log=quiet, checkpoint=checkpoint)
+    assert [h["loss"] for h in actual.history] == [h["loss"] for h in expected.history]
+    for name, value in expected.model.state_dict().items():
+        torch.testing.assert_close(actual.model.state_dict()[name], value, rtol=0, atol=0)
+
+
 def test_selection_score_combines_f1_and_rmse(nona):
     rows = np.arange(len(nona.manifest))
     k = len(nona.classes)
@@ -201,6 +222,7 @@ def test_selection_score_combines_f1_and_rmse(nona):
     assert score == pytest.approx((1 + 0) / 2)
 
 
+@pytest.mark.slow
 def test_plan_b_learns_the_synthetic_wear_classes(root):
     """The synthetic force level rises with the wear class. Over three seeds, Plan B must
     beat the majority class on the held-out tools by a wide margin, and every seed's fused
@@ -223,7 +245,7 @@ def test_plan_b_learns_the_synthetic_wear_classes(root):
 def test_run_writes_results_resumes_and_refuses_other_settings(root):
     messages = []
     out = run(root, "nonastreda", ("T", "F"), "resume", seeds=(0, 1))
-    assert sorted(p.name for p in out.glob("fold*")) == [
+    assert sorted(p.name for p in out.glob("fold*") if not p.name.endswith(".last.pt")) == [
         "fold1-seed0-bags.csv", "fold1-seed0.json", "fold1-seed0.npz",
         "fold1-seed1-bags.csv", "fold1-seed1.json", "fold1-seed1.npz",
     ]  # fmt: skip

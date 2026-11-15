@@ -12,11 +12,11 @@ import json
 
 import numpy as np
 import pytest
-from synthetic import build_planb_root
 
 from pdmfm import arms, explain
 from pdmfm import preprocess as pp
 from pdmfm.datasets.cwru import GEOMETRY
+from tests.support.synthetic import build_planb_root
 
 RATE = pp.MODEL_RATE_HZ
 L = pp.WINDOW_SAMPLES

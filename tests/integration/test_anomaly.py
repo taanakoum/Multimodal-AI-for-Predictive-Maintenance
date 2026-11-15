@@ -10,11 +10,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import cwru_reader, xjtu_reader
 
 from pdmfm import anomaly, windows
 from pdmfm.encoders import StatsEncoder
 from pdmfm.features import FeatureStore
+from tests.support.synthetic import cwru_reader, xjtu_reader
 
 
 def quiet(*_):
@@ -141,6 +141,7 @@ def test_the_support_never_enters_the_test_set(root):
         assert not set(support[:, 0]) & set(test[:, 0])
 
 
+@pytest.mark.slow
 def test_the_onset_protocol_alarms_near_the_labelled_fpt(root):
     summary = _run(root, "xjtu_sy").set_index("score")
     assert summary.loc["rms", "with_fpt"] == 15 and summary.loc["rms", "alarmed"] == 15
@@ -154,7 +155,7 @@ def test_targets_are_refused_before_stage_8(root):
     with pytest.raises(ValueError, match="held-out target"):
         _run(root, "kaist")
     with pytest.raises(ValueError, match="no anomaly protocol"):
-        _run(root, "nonastreda")
+        _run(root, "najafi_thermal")
 
 
 def test_features_of_missing_or_uncached_arms_are_refused(root, monkeypatch):

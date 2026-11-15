@@ -9,11 +9,11 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import FakeReader, cwru_reader, nonastreda_reader, xjtu_reader
 
 from pdmfm import arms, windows
 from pdmfm import preprocess as pp
 from pdmfm.datasets.base import ChannelData, Recording, RecordingInfo
+from tests.support.synthetic import FakeReader, cwru_reader, nonastreda_reader, xjtu_reader
 
 
 @pytest.fixture

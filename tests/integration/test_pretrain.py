@@ -16,13 +16,13 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from synthetic import build_planb_root
 
 from pdmfm import planb, pretrain, protocols
 from pdmfm.model.inputs import assemble
 from pdmfm.model.late import LateEvidential
 from pdmfm.train import TrainConfig, batch, build_model
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import build_planb_root
 
 TINY = pretrain.PretrainConfig(epochs=2, batch_size=16, d=32, steps_per_epoch=8)
 
@@ -319,6 +319,10 @@ def test_fine_tuning_starts_from_the_backbone_of_its_own_fold(root):
     report = pretrain.initialize(model, checkpoint, "nonastreda", fold=1, encoder="stats",
                                  log=quiet)  # fmt: skip
     assert report["loaded"] > 0
+    with pytest.raises(ValueError, match="overlap"):
+        pretrain.initialize(
+            model, checkpoint, "nonastreda", fold=1, encoder="stats", train_units=set(), log=quiet
+        )
     expected = backbone["models"]["nonastreda"]["encoders.force.adapter.1.weight"]
     torch.testing.assert_close(model.encoders["force"].adapter[1].weight.detach(), expected)
     with pytest.raises(ValueError, match="must use its own"):

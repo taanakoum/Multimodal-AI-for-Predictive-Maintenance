@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from synthetic import build_planb_root
 
 from pdmfm import leakage
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import build_planb_root
 
 
 def quiet(*_):

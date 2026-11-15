@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from synthetic import build_planb_root
 
 from pdmfm import losses, planb, protocols, sensors
 from pdmfm.model.fusion import FUSIONS, STAGES, FusionModel, build_model
@@ -24,6 +23,7 @@ from pdmfm.train import (
     make_scheduler,
     predict,
 )
+from tests.support.synthetic import build_planb_root
 
 CANDIDATES = [f for f in FUSIONS if f != "late"]
 SMALL = TrainConfig(epochs=2, batch_size=32, d=32)
@@ -269,6 +269,7 @@ def test_fused_heads_add_their_own_losses(nona):
 
 
 @pytest.mark.parametrize("fusion", CANDIDATES)
+@pytest.mark.slow
 def test_each_candidate_learns_the_synthetic_wear(root, fusion):
     """MATWI's synthetic force level and vibration grow with wear (68 cuts, one window
     each; the second cut's 70 +- 3 um straddles the 71 um class edge, so some labels are

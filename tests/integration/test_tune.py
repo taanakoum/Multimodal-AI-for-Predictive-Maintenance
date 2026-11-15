@@ -7,11 +7,11 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import build_planb_root
 
 from pdmfm import protocols, tune
 from pdmfm.train import TrainConfig
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import build_planb_root
 
 
 def quiet(*_):

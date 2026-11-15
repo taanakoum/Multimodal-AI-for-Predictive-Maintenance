@@ -7,11 +7,11 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import build_planb_root
 
 from pdmfm import gate2, planb, protocols
 from pdmfm.train import TrainConfig
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import build_planb_root
 
 TINY = TrainConfig(epochs=2, batch_size=32, d=16)
 
@@ -253,6 +253,45 @@ def test_search_scores_inner_folds_only_and_resumes(root, monkeypatch):
     assert "| concat |" in (out / "summary.md").read_text(encoding="utf-8")
     gate2.search("nonastreda", "stats", ("T", "F"), "search", TINY, **kwargs)
     assert len(seen) == 8  # resumed: nothing refitted
+
+
+def test_screening_finishes_only_two_candidates_and_refuses_stale_settings(root, monkeypatch):
+    from dataclasses import replace
+
+    calls = []
+    rank = {"late": 0.1, "concat": 0.5, "perceiver": 0.4, "mbt": 0.3, "c2f": 0.2}
+
+    def scores(inputs, train, val, cfg, seed, log):
+        calls.append((cfg.fusion, cfg.epochs))
+        return {
+            "score": rank[cfg.fusion],
+            "robustness": 0.2,
+            "ece": 0.1,
+            "coverage_error": 0.1,
+            "n_params": 100,
+            "seconds": 1,
+            "best_epoch": 1,
+        }
+
+    monkeypatch.setattr(gate2, "score_fit", scores)
+    options = {
+        "folds": [1],
+        "out_root": root / "runs",
+        "screen_epochs": 1,
+        "window_root": root / "interim/windows",
+        "feature_root": root / "interim/features",
+        "log": quiet,
+    }
+    cfg = replace(TINY, epochs=4)
+    gate2.search("nonastreda", "stats", ("F",), "screened", cfg, **options)
+    assert len([v for v in calls if v[1] == 1]) == 4
+    assert len([v for v in calls if v[1] == 4]) == 16
+    result = pd.read_csv(root / "runs/screened/results.csv")
+    assert set(result.candidate) == {"planb", "late", "concat", "perceiver"}
+    gate2.search("nonastreda", "stats", ("F",), "screened", cfg, **options)
+    assert len(calls) == 20
+    with pytest.raises(ValueError, match="other settings"):
+        gate2.search("nonastreda", "stats", ("F",), "screened", replace(cfg, d=32), **options)
 
 
 def test_paderborn_inputs_use_each_inner_folds_training_bearings(root, monkeypatch):

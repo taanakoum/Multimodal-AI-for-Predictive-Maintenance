@@ -13,14 +13,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-from synthetic import (
-    build_planb_root,
-    cwru_reader,
-    matwi_reader,
-    nonastreda_reader,
-    paderborn_reader,
-    xjtu_reader,
-)
 
 from pdmfm import sensors
 from pdmfm.model.inputs import Modality, TaskInputs, assemble
@@ -28,6 +20,14 @@ from pdmfm.model.late import LateEvidential
 from pdmfm.model.layers import ChannelEmbedding
 from pdmfm.train import batch
 from pdmfm.windows import SPECS
+from tests.support.synthetic import (
+    build_planb_root,
+    cwru_reader,
+    matwi_reader,
+    nonastreda_reader,
+    paderborn_reader,
+    xjtu_reader,
+)
 
 
 def describe(dataset: str, image: bool = False) -> list[sensors.ChannelInfo]:

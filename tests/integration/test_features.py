@@ -6,10 +6,10 @@ import time
 
 import numpy as np
 import pytest
-from synthetic import cwru_reader
 
 from pdmfm import arms, features, protocols, texts, windows
 from pdmfm.encoders import StatsEncoder
+from tests.support.synthetic import cwru_reader
 
 
 @pytest.fixture
@@ -90,13 +90,13 @@ def test_subsample_then_complete(store, cache):
     assert full.done.all() and full.folder == part.folder
 
 
-def test_other_encoder_signature_gets_another_folder(store, cache):
+def test_other_encoder_signature_gets_another_folder(store, cache, monkeypatch):
     class OtherCheckpoint(StatsEncoder):
         def signature(self):
             return {**super().signature(), "variant": "other checkpoint"}
 
     first = cache.extract(store, StatsEncoder(), "F", log=quiet)
-    time.sleep(1.1)  # "updated" has one-second resolution
+    monkeypatch.setattr(time, "strftime", lambda *_: "2099-01-01 00:00:00")
     second = cache.extract(store, OtherCheckpoint(), "F", log=quiet)
     assert first.folder != second.folder
     with pytest.warns(UserWarning, match="several"):
@@ -105,13 +105,13 @@ def test_other_encoder_signature_gets_another_folder(store, cache):
         cache.find(store, "mantis", "F")
 
 
-def test_a_complete_cache_wins_over_a_newer_incomplete_one(store, cache):
+def test_a_complete_cache_wins_over_a_newer_incomplete_one(store, cache, monkeypatch):
     class Retrained(StatsEncoder):
         def signature(self):
             return {**super().signature(), "variant": "retrained"}
 
     complete = cache.extract(store, StatsEncoder(), "E", log=quiet)
-    time.sleep(1.1)
+    monkeypatch.setattr(time, "strftime", lambda *_: "2099-01-01 00:00:00")
     cache.extract(store, Retrained(), "E", rows=np.arange(3), log=quiet)  # interrupted early
     with pytest.warns(UserWarning):
         assert cache.find(store, "stats", "E").folder == complete.folder
@@ -162,6 +162,27 @@ def test_image_cache(tmp_path, monkeypatch, cache):
         features.extract_images("nonastreda", FakeImageEncoder(), root=cache.root, log=quiet)
         == first
     )
+
+
+def test_image_extraction_resumes_completed_chunks(tmp_path, monkeypatch, cache):
+    monkeypatch.setenv("PDMFM_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(features, "image_paths", lambda _: {"tool": ["a.png", "b.png", "c.png"]})
+
+    class Interrupted(FakeImageEncoder):
+        calls = 0
+
+        def encode_paths(self, paths, kind):
+            self.calls += 1
+            if self.calls == 2:
+                raise InterruptedError
+            return super().encode_paths(paths, kind)
+
+    with pytest.raises(InterruptedError):
+        features.extract_images("nonastreda", Interrupted(), root=cache.root, chunk=1)
+    folder = next((cache.root / "images").glob("nonastreda-tool-*"))
+    np.testing.assert_array_equal(np.load(folder / "done.npy"), [True, False, False])
+    features.extract_images("nonastreda", FakeImageEncoder(), root=cache.root, chunk=1)
+    assert np.load(folder / "done.npy").all()
 
 
 class FakeTextEncoder:

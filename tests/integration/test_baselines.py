@@ -8,12 +8,12 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from synthetic import build_planb_root
 
 from pdmfm import baselines, planb, report
 from pdmfm.model.inputs import assemble
 from pdmfm.train import TrainConfig
 from pdmfm.windows import WindowStore
+from tests.support.synthetic import build_planb_root
 
 
 def quiet(*_):

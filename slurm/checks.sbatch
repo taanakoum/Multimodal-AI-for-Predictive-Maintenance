@@ -23,7 +23,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 echo "job $SLURM_JOB_ID on $(hostname), started $(date)"
 echo "commit: $(git log -1 --oneline 2>/dev/null || echo unknown)"
 echo "=== tests (real-data and checkpoint tests run where their data and weights exist)"
-python -m pytest -o addopts= -q -rs tests
+python -m pytest -m "not network and not weights and not gpu" --run-data -q -rs tests
 echo "=== window stores"
 python -m pdmfm.windows info
 echo "=== feature caches"
