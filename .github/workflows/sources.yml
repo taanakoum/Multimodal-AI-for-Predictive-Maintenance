@@ -20,8 +20,8 @@ jobs:
       PDMFM_NETWORK_TESTS: "1"
       PDMFM_DATA_ROOT: ${{ github.workspace }}/.ci-data
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.11"
           enable-cache: true
